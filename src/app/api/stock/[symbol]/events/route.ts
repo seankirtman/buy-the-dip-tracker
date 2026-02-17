@@ -1,14 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cacheManager, CacheManager } from '@/lib/db/cache';
 import { getDailyTimeSeries, getWeeklyTimeSeries } from '@/lib/api/alpha-vantage';
-import { getCompanyProfile, getDailyCandlesTimeSeries } from '@/lib/api/finnhub';
+import {
+  getCompanyProfile,
+  getDailyCandlesTimeSeries,
+  getCompanyNews,
+  getQuote,
+} from '@/lib/api/finnhub';
 import { detectAnomalies } from '@/lib/events/detector';
 import { correlateNews } from '@/lib/events/correlator';
 import { scoreAndRankEvents } from '@/lib/events/scorer';
 import { RateLimitError } from '@/lib/api/api-queue';
 import type { TimeSeriesData } from '@/lib/types/stock';
-import type { StockEvent } from '@/lib/types/event';
-import { subYears, format } from 'date-fns';
+import type { StockEvent, NewsArticle } from '@/lib/types/event';
+import { subYears, subDays, format } from 'date-fns';
+import crypto from 'crypto';
 
 const EVENTS_PIPELINE_VERSION = 'v2-prefer-top-headline';
 
@@ -208,6 +214,29 @@ export async function GET(
         // Fall through to empty response below.
       }
 
+      // Final fallback: build news-driven events so Event View remains useful in prod.
+      try {
+        const to = format(new Date(), 'yyyy-MM-dd');
+        const from = format(subDays(new Date(), 90), 'yyyy-MM-dd');
+        const [news, quote] = await Promise.all([
+          getCompanyNews(upperSymbol, from, to),
+          getQuote(upperSymbol),
+        ]);
+
+        if (news.length > 0) {
+          const fallbackEvents = buildNewsOnlyEvents(upperSymbol, news, quote.price, weeklyStart);
+          if (fallbackEvents.length > 0) {
+            return NextResponse.json({
+              data: fallbackEvents,
+              stale: true,
+              error: 'Using news-only events fallback due to provider limits',
+            });
+          }
+        }
+      } catch {
+        // Fall through to empty response below.
+      }
+
       // No cache/fallback available: return empty list so UI stays functional.
       return NextResponse.json({
         data: [],
@@ -244,5 +273,60 @@ function normalizeEvents(events: StockEvent[], minDate: string): StockEvent[] {
     seen.set(event.id, count + 1);
     if (count === 0) return event;
     return { ...event, id: `${event.id}-${count + 1}` };
+  });
+}
+
+function buildNewsOnlyEvents(
+  symbol: string,
+  news: NewsArticle[],
+  currentPrice: number,
+  minDate: string
+): StockEvent[] {
+  const topNews = [...news]
+    .filter((n) => n.publishedAt.slice(0, 10) >= minDate)
+    .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt))
+    .slice(0, 12);
+
+  return topNews.map((article) => {
+    const lower = `${article.headline} ${article.summary}`.toLowerCase();
+    const isNegative =
+      lower.includes('drop') ||
+      lower.includes('falls') ||
+      lower.includes('decline') ||
+      lower.includes('selloff') ||
+      lower.includes('downgrade');
+
+    const id = crypto
+      .createHash('md5')
+      .update(`${symbol}:news-fallback:${article.id}:${article.publishedAt}`)
+      .digest('hex')
+      .slice(0, 12);
+
+    return {
+      id,
+      symbol,
+      date: article.publishedAt.slice(0, 10),
+      type: 'unknown',
+      title: article.headline,
+      description: article.summary || `${symbol} featured in market coverage from ${article.source}.`,
+      impact: {
+        magnitude: 'moderate',
+        direction: isNegative ? 'negative' : 'positive',
+        absoluteMove: 0,
+        percentMove: 0,
+        volumeSpike: 1,
+      },
+      priceAtEvent: currentPrice,
+      priceNow: currentPrice,
+      changeSinceEvent: 0,
+      changePercentSinceEvent: 0,
+      dailyReturn: 0,
+      sp500Return: 0,
+      relativeReturn: 0,
+      zScore: 0,
+      newsArticles: [article],
+      recoveryDays: null,
+      impactScore: 0,
+    };
   });
 }
