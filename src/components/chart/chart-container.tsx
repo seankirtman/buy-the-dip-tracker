@@ -125,6 +125,8 @@ export const ChartContainer = forwardRef<ChartContainerHandle, ChartContainerPro
         timeScale: {
           borderColor: 'rgba(51, 65, 85, 0.4)',
           timeVisible: true,
+          minBarSpacing: 3,
+          barSpacing: 6,
           tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) =>
             formatTickLabel(time, tickMarkType, timePeriod),
         },
