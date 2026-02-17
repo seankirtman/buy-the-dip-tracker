@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cacheManager, CacheManager } from '@/lib/db/cache';
 import { getDailyTimeSeries, getWeeklyTimeSeries } from '@/lib/api/alpha-vantage';
-import { getCompanyProfile } from '@/lib/api/finnhub';
+import { getCompanyProfile, getDailyCandlesTimeSeries } from '@/lib/api/finnhub';
 import { detectAnomalies } from '@/lib/events/detector';
 import { correlateNews } from '@/lib/events/correlator';
 import { scoreAndRankEvents } from '@/lib/events/scorer';
@@ -164,8 +164,56 @@ export async function GET(
           error: error.message,
         });
       }
-      // No cache available: return empty list so UI stays functional.
-      return NextResponse.json({ data: [], stale: true, error: error instanceof Error ? error.message : 'Rate limited' });
+
+      // Fallback path for production: compute events from Finnhub daily candles only.
+      // This avoids Alpha Vantage limits while still surfacing useful event context.
+      try {
+        const [stockDaily, spyDaily] = await Promise.all([
+          getDailyCandlesTimeSeries(upperSymbol),
+          getDailyCandlesTimeSeries('SPY'),
+        ]);
+
+        if (stockDaily.dataPoints.length >= 50 && spyDaily.dataPoints.length >= 50) {
+          let companyName: string | undefined;
+          try {
+            const profile = await getCompanyProfile(upperSymbol);
+            companyName = profile?.name;
+          } catch {
+            // Optional enrichment only.
+          }
+
+          const dailyAnomalies = detectAnomalies(stockDaily.dataPoints, spyDaily.dataPoints, {
+            rollingWindow: 40,
+            zScoreThreshold: 1.9,
+            volumeWindow: 20,
+            timeframe: 'daily',
+          })
+            .sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore))
+            .slice(0, 10);
+
+          if (dailyAnomalies.length > 0) {
+            const correlated = await correlateNews(upperSymbol, dailyAnomalies, companyName);
+            const events = normalizeEvents(
+              scoreAndRankEvents(correlated, stockDaily.dataPoints, upperSymbol),
+              weeklyStart
+            );
+            return NextResponse.json({
+              data: events,
+              stale: true,
+              error: 'Using Finnhub events fallback due to Alpha Vantage limits',
+            });
+          }
+        }
+      } catch {
+        // Fall through to empty response below.
+      }
+
+      // No cache/fallback available: return empty list so UI stays functional.
+      return NextResponse.json({
+        data: [],
+        stale: true,
+        error: error instanceof Error ? error.message : 'Rate limited',
+      });
     }
 
     console.error('Events API error:', error);
