@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cacheManager } from '@/lib/db/cache';
-import { getDailyTimeSeries, getWeeklyTimeSeries } from '@/lib/api/alpha-vantage';
-import { getIntradayTimeSeries, getDailyCandlesTimeSeries } from '@/lib/api/finnhub';
+import {
+  getDailyTimeSeries,
+  getWeeklyTimeSeries,
+  getIntradayTimeSeries as getAlphaIntradayTimeSeries,
+} from '@/lib/api/alpha-vantage';
+import {
+  getIntradayTimeSeries as getFinnhubIntradayTimeSeries,
+  getDailyCandlesTimeSeries,
+} from '@/lib/api/finnhub';
 import { RateLimitError } from '@/lib/api/api-queue';
 import { filterDataByPeriod, getTTLForPeriod } from '@/lib/utils/date';
 import type { TimePeriod, TimeSeriesData } from '@/lib/types/stock';
@@ -29,7 +36,7 @@ export async function GET(
   const useIntraday = period === '1D';
   const useWeekly = USE_WEEKLY_FOR.includes(period);
   const cacheKey = useIntraday
-    ? `${upperSymbol}:intraday:60min`
+    ? `${upperSymbol}:intraday:5min`
     : useWeekly
       ? `${upperSymbol}:weekly`
       : `${upperSymbol}:daily:compact`;
@@ -38,19 +45,20 @@ export async function GET(
   try {
     const fetchIntradayWithFallback = async (): Promise<TimeSeriesData> => {
       try {
-        const intraday = await getIntradayTimeSeries(upperSymbol);
-        if (intraday.dataPoints.length > 0) return intraday;
+        const intraday = await getFinnhubIntradayTimeSeries(upperSymbol);
+        if (intraday.dataPoints.length >= 4) return intraday;
       } catch {
-        // Fallback to daily below
+        // Try next provider below.
       }
 
-      // Fallback: return latest daily bar if intraday endpoint is unavailable for this key.
-      const daily = await getDailyTimeSeries(upperSymbol, 'compact');
-      const latestDate = daily.dataPoints[daily.dataPoints.length - 1]?.time;
-      const latestOnly = latestDate
-        ? daily.dataPoints.filter((p) => p.time === latestDate)
-        : [];
-      return { ...daily, dataPoints: latestOnly };
+      try {
+        const intraday = await getAlphaIntradayTimeSeries(upperSymbol);
+        if (intraday.dataPoints.length >= 4) return intraday;
+      } catch {
+        // Fall through to error below.
+      }
+
+      throw new Error('Intraday data unavailable');
     };
 
     const fullData = await cacheManager.getOrFetch<TimeSeriesData>(
@@ -79,7 +87,7 @@ export async function GET(
     });
   } catch (error) {
     const cached = cacheManager.getCached<TimeSeriesData>('price_cache', cacheKey);
-    if (cached) {
+    if (cached && (!useIntraday || cached.dataPoints.length >= 4)) {
       const filteredPoints = useIntraday
         ? cached.dataPoints
         : filterDataByPeriod(cached.dataPoints, period);

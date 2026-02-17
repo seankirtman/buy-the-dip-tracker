@@ -12,11 +12,18 @@ import type { StockEvent } from '@/lib/types/event';
 interface StockChartProps {
   symbol: string;
   historyData: TimeSeriesData | null;
+  historyLoading?: boolean;
   timePeriod: TimePeriod;
   onTimePeriodChange: (period: TimePeriod) => void;
 }
 
-export function StockChart({ symbol, historyData, timePeriod, onTimePeriodChange }: StockChartProps) {
+export function StockChart({
+  symbol,
+  historyData,
+  historyLoading = false,
+  timePeriod,
+  onTimePeriodChange,
+}: StockChartProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('standard');
   const [events, setEvents] = useState<StockEvent[]>([]);
   const [eventsSymbol, setEventsSymbol] = useState<string | null>(null);
@@ -111,6 +118,10 @@ export function StockChart({ symbol, historyData, timePeriod, onTimePeriodChange
               timePeriod={timePeriod}
               onEventClick={handleEventClick}
             />
+          ) : historyLoading ? (
+            <div className="flex h-[500px] w-full items-center justify-center rounded-xl border border-border/50 bg-gradient-to-b from-bg-secondary/30 to-bg-primary px-6 text-center text-sm text-text-secondary">
+              Loading {timePeriod} chart for {symbol}...
+            </div>
           ) : (
             <div className="flex h-[500px] w-full items-center justify-center rounded-xl border border-border/50 bg-gradient-to-b from-bg-secondary/30 to-bg-primary px-6 text-center text-sm text-text-secondary">
               Chart data is temporarily unavailable for {symbol}. Try another time period or refresh in a minute.

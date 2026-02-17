@@ -15,6 +15,7 @@ interface StockDashboardProps {
 export function StockDashboard({ symbol, initialQuote, initialHistory }: StockDashboardProps) {
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('1Y');
   const [historyData, setHistoryData] = useState<TimeSeriesData | null>(initialHistory);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [periodChange, setPeriodChange] = useState<number | undefined>(undefined);
   const [periodChangePercent, setPeriodChangePercent] = useState<number | undefined>(undefined);
 
@@ -48,19 +49,32 @@ export function StockDashboard({ symbol, initialQuote, initialHistory }: StockDa
   useEffect(() => {
     if (timePeriod === '1Y' && initialHistory) {
       setHistoryData(initialHistory);
+      setHistoryLoading(false);
       return;
     }
 
     let cancelled = false;
     async function fetchHistory() {
+      setHistoryLoading(true);
+      // Clear previous series so period changes are visually obvious.
+      setHistoryData(null);
       try {
         const res = await fetch(`/api/stock/${symbol}/history?period=${timePeriod}`);
-        const json = await res.json();
-        if (!cancelled && json.data) {
+        const text = await res.text();
+        const json = text.trim().startsWith('{') ? JSON.parse(text) : null;
+        if (!cancelled && res.ok && json?.data) {
           setHistoryData(json.data);
+        } else if (!cancelled) {
+          setHistoryData(null);
         }
       } catch {
-        // Keep existing data on error
+        if (!cancelled) {
+          setHistoryData(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setHistoryLoading(false);
+        }
       }
     }
     fetchHistory();
@@ -82,6 +96,7 @@ export function StockDashboard({ symbol, initialQuote, initialHistory }: StockDa
       <StockChart
         symbol={symbol}
         historyData={historyData}
+        historyLoading={historyLoading}
         timePeriod={timePeriod}
         onTimePeriodChange={setTimePeriod}
       />

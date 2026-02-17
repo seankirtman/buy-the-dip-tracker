@@ -152,8 +152,9 @@ export async function getIntradayTimeSeries(symbol: string): Promise<TimeSeriesD
 
   const apiKey = getApiKey();
   const now = Math.floor(Date.now() / 1000);
-  const oneWeekAgo = now - 7 * 24 * 60 * 60;
-  const url = `${BASE_URL}/stock/candle?symbol=${encodeURIComponent(symbol)}&resolution=60&from=${oneWeekAgo}&to=${now}&token=${apiKey}`;
+  // Use higher granularity for a smoother 1D chart while preserving hourly labels in the UI.
+  const twoWeeksAgo = now - 14 * 24 * 60 * 60;
+  const url = `${BASE_URL}/stock/candle?symbol=${encodeURIComponent(symbol)}&resolution=5&from=${twoWeeksAgo}&to=${now}&token=${apiKey}`;
 
   const res = await fetch(url);
   if (!res.ok) {
@@ -185,9 +186,37 @@ export async function getIntradayTimeSeries(symbol: string): Promise<TimeSeriesD
     volume: parsed.v[i],
   }));
 
-  // Keep only the latest active trading day.
-  const lastDate = points[points.length - 1].time.slice(0, 10);
-  const latestDayPoints = points.filter((p) => p.time.startsWith(lastDate));
+  // Prefer the most recent day with enough hourly bars to represent a full session.
+  const byDate = new Map<string, typeof points>();
+  for (const p of points) {
+    const date = p.time.slice(0, 10);
+    const arr = byDate.get(date) ?? [];
+    arr.push(p);
+    byDate.set(date, arr);
+  }
+
+  const dates = [...byDate.keys()].sort();
+  const MIN_INTRADAY_POINTS = 24;
+  let selectedDate: string | undefined;
+
+  for (let i = dates.length - 1; i >= 0; i--) {
+    const date = dates[i];
+    const dayPoints = byDate.get(date) ?? [];
+    if (dayPoints.length >= MIN_INTRADAY_POINTS) {
+      selectedDate = date;
+      break;
+    }
+  }
+
+  if (!selectedDate) {
+    selectedDate = dates.reduce((best, date) => {
+      const bestCount = (byDate.get(best) ?? []).length;
+      const currCount = (byDate.get(date) ?? []).length;
+      return currCount > bestCount ? date : best;
+    }, dates[0]);
+  }
+
+  const latestDayPoints = byDate.get(selectedDate) ?? [];
 
   return {
     symbol,
