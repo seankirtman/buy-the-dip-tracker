@@ -1,0 +1,70 @@
+@import 'tailwindcss';
+
+:root {
+  --color-bg-primary: #0f1729;
+  --color-bg-secondary: #1a2332;
+  --color-bg-card: #1e293b;
+  --color-bg-hover: #263348;
+  --color-border: #334155;
+  --color-text-primary: #f1f5f9;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
+  --color-accent: #3b82f6;
+  --color-accent-hover: #2563eb;
+  --color-positive: #22c55e;
+  --color-positive-bg: rgba(34, 197, 94, 0.1);
+  --color-negative: #ef4444;
+  --color-negative-bg: rgba(239, 68, 68, 0.1);
+  --color-event-extreme: #f97316;
+  --color-event-high: #eab308;
+  --color-event-moderate: #6366f1;
+}
+
+@theme {
+  --color-bg-primary: var(--color-bg-primary);
+  --color-bg-secondary: var(--color-bg-secondary);
+  --color-bg-card: var(--color-bg-card);
+  --color-bg-hover: var(--color-bg-hover);
+  --color-border: var(--color-border);
+  --color-text-primary: var(--color-text-primary);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-muted: var(--color-text-muted);
+  --color-accent: var(--color-accent);
+  --color-accent-hover: var(--color-accent-hover);
+  --color-positive: var(--color-positive);
+  --color-positive-bg: var(--color-positive-bg);
+  --color-negative: var(--color-negative);
+  --color-negative-bg: var(--color-negative-bg);
+  --color-event-extreme: var(--color-event-extreme);
+  --color-event-high: var(--color-event-high);
+  --color-event-moderate: var(--color-event-moderate);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+html,
+body {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Scrollbar styling for event list */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: var(--color-bg-secondary);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}

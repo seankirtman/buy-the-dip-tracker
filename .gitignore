@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.next-dev/
+out/
+data/cache.db
+data/cache.db-shm
+data/cache.db-wal
+.env.local
+.env*.local
+*.tsbuildinfo
+next-env.d.ts
+.claude/
