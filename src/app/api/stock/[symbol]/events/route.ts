@@ -169,6 +169,50 @@ export async function GET(
       // Fallback path for production: compute events from Finnhub daily candles only.
       // This avoids Alpha Vantage limits while still surfacing useful event context.
       try {
+        const [stockWeeklyCached, spyWeeklyCached] = [
+          cacheManager.getCached<TimeSeriesData>('price_cache', `${upperSymbol}:weekly`),
+          cacheManager.getCached<TimeSeriesData>('price_cache', 'SPY:weekly'),
+        ];
+
+        if (
+          stockWeeklyCached?.dataPoints?.length &&
+          spyWeeklyCached?.dataPoints?.length &&
+          stockWeeklyCached.dataPoints.length >= 20 &&
+          spyWeeklyCached.dataPoints.length >= 20
+        ) {
+          let companyName: string | undefined;
+          try {
+            const profile = await getCompanyProfile(upperSymbol);
+            companyName = profile?.name;
+          } catch {
+            // Optional enrichment only.
+          }
+
+          const weeklyAnchors = selectTopRelativeMoveAnchors(
+            stockWeeklyCached.dataPoints,
+            spyWeeklyCached.dataPoints,
+            weeklyStart,
+            'weekly'
+          );
+
+          if (weeklyAnchors.length > 0) {
+            const correlated = await correlateNews(upperSymbol, weeklyAnchors, companyName);
+            const events = normalizeEvents(
+              scoreAndRankEvents(correlated, stockWeeklyCached.dataPoints, upperSymbol),
+              weeklyStart
+            );
+            return NextResponse.json({
+              data: events,
+              stale: true,
+              error: 'Using cached weekly date-anchored fallback due to provider limits',
+            });
+          }
+        }
+      } catch {
+        // Continue to next fallback.
+      }
+
+      try {
         const [stockDaily, spyDaily] = await Promise.all([
           getDailyCandlesTimeSeries(upperSymbol),
           getDailyCandlesTimeSeries('SPY'),
@@ -260,7 +304,8 @@ function normalizeEvents(events: StockEvent[], minDate: string): StockEvent[] {
 function selectTopRelativeMoveAnchors(
   stockData: OHLCDataPoint[],
   spyData: OHLCDataPoint[],
-  minDate: string
+  minDate: string,
+  timeframe: 'daily' | 'weekly' = 'daily'
 ): PriceAnomaly[] {
   const spyByDate = new Map(spyData.map((p) => [p.time, p]));
   const aligned: Array<{ stock: OHLCDataPoint; spy: OHLCDataPoint }> = [];
@@ -288,7 +333,7 @@ function selectTopRelativeMoveAnchors(
     candidates.push({
       index: i,
       date: curr.stock.time,
-      timeframe: 'daily',
+      timeframe,
       stockReturn,
       spyReturn,
       relativeReturn,
