@@ -1,20 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cacheManager, CacheManager } from '@/lib/db/cache';
 import { getDailyTimeSeries, getWeeklyTimeSeries } from '@/lib/api/alpha-vantage';
-import {
-  getCompanyProfile,
-  getDailyCandlesTimeSeries,
-  getCompanyNews,
-  getQuote,
-} from '@/lib/api/finnhub';
+import { getCompanyProfile, getDailyCandlesTimeSeries } from '@/lib/api/finnhub';
 import { detectAnomalies } from '@/lib/events/detector';
 import { correlateNews } from '@/lib/events/correlator';
 import { scoreAndRankEvents } from '@/lib/events/scorer';
 import { RateLimitError } from '@/lib/api/api-queue';
-import type { TimeSeriesData } from '@/lib/types/stock';
-import type { StockEvent, NewsArticle } from '@/lib/types/event';
-import { subYears, subDays, format } from 'date-fns';
-import crypto from 'crypto';
+import type { OHLCDataPoint, TimeSeriesData } from '@/lib/types/stock';
+import type { StockEvent } from '@/lib/types/event';
+import type { PriceAnomaly } from '@/lib/events/detector';
+import { subYears, format } from 'date-fns';
 
 const EVENTS_PIPELINE_VERSION = 'v2-prefer-top-headline';
 
@@ -197,8 +192,14 @@ export async function GET(
             .sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore))
             .slice(0, 10);
 
-          if (dailyAnomalies.length > 0) {
-            const correlated = await correlateNews(upperSymbol, dailyAnomalies, companyName);
+          // If strict anomalies are empty, use top relative-move dates as fallback anchors.
+          const fallbackAnchors =
+            dailyAnomalies.length > 0
+              ? dailyAnomalies
+              : selectTopRelativeMoveAnchors(stockDaily.dataPoints, spyDaily.dataPoints, weeklyStart);
+
+          if (fallbackAnchors.length > 0) {
+            const correlated = await correlateNews(upperSymbol, fallbackAnchors, companyName);
             const events = normalizeEvents(
               scoreAndRankEvents(correlated, stockDaily.dataPoints, upperSymbol),
               weeklyStart
@@ -206,30 +207,10 @@ export async function GET(
             return NextResponse.json({
               data: events,
               stale: true,
-              error: 'Using Finnhub events fallback due to Alpha Vantage limits',
-            });
-          }
-        }
-      } catch {
-        // Fall through to empty response below.
-      }
-
-      // Final fallback: build news-driven events so Event View remains useful in prod.
-      try {
-        const to = format(new Date(), 'yyyy-MM-dd');
-        const from = format(subDays(new Date(), 90), 'yyyy-MM-dd');
-        const [news, quote] = await Promise.all([
-          getCompanyNews(upperSymbol, from, to),
-          getQuote(upperSymbol),
-        ]);
-
-        if (news.length > 0) {
-          const fallbackEvents = buildNewsOnlyEvents(upperSymbol, news, quote.price, weeklyStart);
-          if (fallbackEvents.length > 0) {
-            return NextResponse.json({
-              data: fallbackEvents,
-              stale: true,
-              error: 'Using news-only events fallback due to provider limits',
+              error:
+                dailyAnomalies.length > 0
+                  ? 'Using Finnhub events fallback due to Alpha Vantage limits'
+                  : 'Using date-anchored Finnhub fallback due to provider limits',
             });
           }
         }
@@ -276,57 +257,50 @@ function normalizeEvents(events: StockEvent[], minDate: string): StockEvent[] {
   });
 }
 
-function buildNewsOnlyEvents(
-  symbol: string,
-  news: NewsArticle[],
-  currentPrice: number,
+function selectTopRelativeMoveAnchors(
+  stockData: OHLCDataPoint[],
+  spyData: OHLCDataPoint[],
   minDate: string
-): StockEvent[] {
-  const topNews = [...news]
-    .filter((n) => n.publishedAt.slice(0, 10) >= minDate)
-    .sort((a, b) => b.publishedAt.localeCompare(a.publishedAt))
-    .slice(0, 12);
+): PriceAnomaly[] {
+  const spyByDate = new Map(spyData.map((p) => [p.time, p]));
+  const aligned: Array<{ stock: OHLCDataPoint; spy: OHLCDataPoint }> = [];
+  for (const stock of stockData) {
+    const spy = spyByDate.get(stock.time);
+    if (spy) aligned.push({ stock, spy });
+  }
 
-  return topNews.map((article) => {
-    const lower = `${article.headline} ${article.summary}`.toLowerCase();
-    const isNegative =
-      lower.includes('drop') ||
-      lower.includes('falls') ||
-      lower.includes('decline') ||
-      lower.includes('selloff') ||
-      lower.includes('downgrade');
+  if (aligned.length < 3) return [];
 
-    const id = crypto
-      .createHash('md5')
-      .update(`${symbol}:news-fallback:${article.id}:${article.publishedAt}`)
-      .digest('hex')
-      .slice(0, 12);
+  const candidates: PriceAnomaly[] = [];
+  for (let i = 1; i < aligned.length; i++) {
+    const prev = aligned[i - 1];
+    const curr = aligned[i];
+    const stockReturn = prev.stock.close !== 0 ? (curr.stock.close - prev.stock.close) / prev.stock.close : 0;
+    const spyReturn = prev.spy.close !== 0 ? (curr.spy.close - prev.spy.close) / prev.spy.close : 0;
+    const relativeReturn = stockReturn - spyReturn;
 
-    return {
-      id,
-      symbol,
-      date: article.publishedAt.slice(0, 10),
-      type: 'unknown',
-      title: article.headline,
-      description: article.summary || `${symbol} featured in market coverage from ${article.source}.`,
-      impact: {
-        magnitude: 'moderate',
-        direction: isNegative ? 'negative' : 'positive',
-        absoluteMove: 0,
-        percentMove: 0,
-        volumeSpike: 1,
-      },
-      priceAtEvent: currentPrice,
-      priceNow: currentPrice,
-      changeSinceEvent: 0,
-      changePercentSinceEvent: 0,
-      dailyReturn: 0,
-      sp500Return: 0,
-      relativeReturn: 0,
-      zScore: 0,
-      newsArticles: [article],
-      recoveryDays: null,
-      impactScore: 0,
-    };
-  });
+    const volWindowStart = Math.max(1, i - 20);
+    const volWindow = aligned.slice(volWindowStart, i).map((r) => r.stock.volume);
+    const avgVol =
+      volWindow.length > 0 ? volWindow.reduce((sum, v) => sum + v, 0) / volWindow.length : curr.stock.volume;
+    const volumeSpike = avgVol > 0 ? curr.stock.volume / avgVol : 1;
+
+    candidates.push({
+      index: i,
+      date: curr.stock.time,
+      timeframe: 'daily',
+      stockReturn,
+      spyReturn,
+      relativeReturn,
+      zScore: Math.abs(relativeReturn) * 100, // proxy score for ranking only
+      volumeSpike,
+      close: curr.stock.close,
+      volume: curr.stock.volume,
+    });
+  }
+
+  return candidates
+    .filter((c) => c.date >= minDate)
+    .sort((a, b) => Math.abs(b.relativeReturn) - Math.abs(a.relativeReturn))
+    .slice(0, 8);
 }
