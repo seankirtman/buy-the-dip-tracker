@@ -41,6 +41,18 @@ export async function GET(request: NextRequest) {
         { status: cached ? 200 : 429 }
       );
     }
+    // Keep search usable even if provider auth/config fails in deployment.
+    const data = withTickerFallback([], query);
+    if (data.length > 0) {
+      return NextResponse.json(
+        {
+          data,
+          stale: true,
+          error: error instanceof Error ? error.message : 'Provider search unavailable',
+        },
+        { status: 200 }
+      );
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to search symbols' },
       { status: 500 }
