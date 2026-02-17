@@ -1,13 +1,29 @@
 import Database from 'better-sqlite3';
+import fs from 'fs';
 import path from 'path';
 
 let db: Database.Database | null = null;
 
 export function getDb(): Database.Database {
   if (!db) {
-    const dbPath = path.join(process.cwd(), 'data', 'cache.db');
-    db = new Database(dbPath);
-    db.pragma('journal_mode = WAL');
+    const isVercel = Boolean(process.env.VERCEL);
+    const dbPath = isVercel
+      ? path.join('/tmp', 'cache.db')
+      : path.join(process.cwd(), 'data', 'cache.db');
+
+    try {
+      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+      db = new Database(dbPath);
+    } catch {
+      // Last-resort fallback so server rendering doesn't crash if filesystem is unavailable.
+      db = new Database(':memory:');
+    }
+
+    try {
+      db.pragma('journal_mode = WAL');
+    } catch {
+      // Ignore journal mode issues in ephemeral/in-memory environments.
+    }
     initSchema(db);
   }
   return db;
