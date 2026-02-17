@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cacheManager } from '@/lib/db/cache';
-import { searchSymbol } from '@/lib/api/finnhub';
+import { searchSymbol as searchFinnhub } from '@/lib/api/finnhub';
+import { searchSymbol as searchAlphaVantage } from '@/lib/api/alpha-vantage';
 import { RateLimitError } from '@/lib/api/api-queue';
 
 // Alpha Vantage SYMBOL_SEARCH sometimes returns empty for valid tickers (e.g. CRM).
@@ -12,6 +13,24 @@ function withTickerFallback(data: { symbol: string; name: string; type: string; 
   const upper = query.trim().toUpperCase();
   if (!TICKER_PATTERN.test(upper)) return data;
   return [{ symbol: upper, name: upper, type: 'Equity', region: 'United States', currency: 'USD' }];
+}
+
+async function searchWithFallbackProviders(query: string) {
+  try {
+    const finnhubResults = await searchFinnhub(query);
+    if (finnhubResults.length > 0) return finnhubResults;
+  } catch {
+    // Try Alpha Vantage below.
+  }
+
+  try {
+    const alphaResults = await searchAlphaVantage(query);
+    if (alphaResults.length > 0) return alphaResults;
+  } catch {
+    // If both providers fail, return empty and let route fallback handle ticker-only queries.
+  }
+
+  return [];
 }
 
 export async function GET(request: NextRequest) {
@@ -26,7 +45,7 @@ export async function GET(request: NextRequest) {
       'news_cache', // reuse news_cache table for search results
       `search:${query.toUpperCase()}`,
       86400, // Cache search results for 24 hours
-      () => searchSymbol(query),
+      () => searchWithFallbackProviders(query),
       query
     );
 
