@@ -1,6 +1,7 @@
 import { formatCurrency, formatLargeNumber, formatVolume } from '@/lib/utils/format';
 import type { StockQuote, TimeSeriesData } from '@/lib/types/stock';
 import type { CompanyProfile } from '@/lib/api/finnhub';
+import { RangeSummary } from './range-summary';
 
 interface StockStatsGridProps {
   quote: StockQuote | null;
@@ -43,6 +44,17 @@ export function StockStatsGrid({ quote, history, profile }: StockStatsGridProps)
 
   const marketCap = profile?.marketCap ?? quote?.marketCap ?? null;
   const peRatio = quote?.peRatio;
+
+  let periodChangePercent: number | undefined;
+  if (history?.dataPoints && history.dataPoints.length >= 2 && quote) {
+    const first = history.dataPoints[0];
+    const last = history.dataPoints[history.dataPoints.length - 1];
+    const startPrice = first.open;
+    const endPrice = last.close;
+    if (startPrice && startPrice > 0) {
+      periodChangePercent = ((endPrice - startPrice) / startPrice) * 100;
+    }
+  }
 
   return (
     <section className="mt-6" aria-label="Key statistics">
@@ -92,6 +104,15 @@ export function StockStatsGrid({ quote, history, profile }: StockStatsGridProps)
                     <span>{formatCurrency(week52High)}</span>
                   </div>
                 </div>
+                <RangeSummary
+                  symbol={quote.symbol ?? quote.name}
+                  pctOfRange={((quote.price - week52Low) / (week52High - week52Low)) * 100}
+                  week52High={week52High}
+                  week52Low={week52Low}
+                  price={quote.price}
+                  companyName={profile?.name}
+                  periodChangePercent={periodChangePercent}
+                />
               </>
             )}
           </StatSection>
