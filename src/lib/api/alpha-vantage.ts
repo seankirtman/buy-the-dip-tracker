@@ -10,6 +10,19 @@ import { checkRateLimit, recordApiCall } from './api-queue';
 
 const BASE_URL = 'https://www.alphavantage.co/query';
 
+/** Alpha Vantage free tier: 1 request per second. Throttle to avoid per-second limits. */
+const MIN_INTERVAL_MS = 1100;
+let lastAvCallTime = 0;
+
+async function throttleAvCalls(): Promise<void> {
+  const now = Date.now();
+  const elapsed = now - lastAvCallTime;
+  if (elapsed < MIN_INTERVAL_MS && lastAvCallTime > 0) {
+    await new Promise((r) => setTimeout(r, MIN_INTERVAL_MS - elapsed));
+  }
+  lastAvCallTime = Date.now();
+}
+
 function getApiKey(): string {
   const key = process.env.ALPHA_VANTAGE_API_KEY;
   if (!key || key === 'your_alpha_vantage_key_here') {
@@ -19,6 +32,7 @@ function getApiKey(): string {
 }
 
 async function fetchAV(params: Record<string, string>): Promise<unknown> {
+  await throttleAvCalls();
   const apiKey = getApiKey();
   const url = new URL(BASE_URL);
   url.searchParams.set('apikey', apiKey);

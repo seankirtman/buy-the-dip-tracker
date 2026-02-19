@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cacheManager, CacheManager } from '@/lib/db/cache';
 import { getDailyTimeSeries, getWeeklyTimeSeries } from '@/lib/api/alpha-vantage';
-import { getCompanyProfile, getDailyCandlesTimeSeries } from '@/lib/api/finnhub';
+import { getCompanyProfile, getCompanyNews, getDailyCandlesTimeSeries, getQuote } from '@/lib/api/finnhub';
 import { detectAnomalies } from '@/lib/events/detector';
 import { correlateNews } from '@/lib/events/correlator';
 import { scoreAndRankEvents } from '@/lib/events/scorer';
 import { RateLimitError } from '@/lib/api/api-queue';
 import type { OHLCDataPoint, TimeSeriesData } from '@/lib/types/stock';
-import type { StockEvent } from '@/lib/types/event';
+import type { StockEvent, NewsArticle } from '@/lib/types/event';
 import type { PriceAnomaly } from '@/lib/events/detector';
-import { subYears, format } from 'date-fns';
+import { subYears, subDays, format } from 'date-fns';
+import crypto from 'crypto';
 
 const EVENTS_PIPELINE_VERSION = 'v2-prefer-top-headline';
 
@@ -46,19 +47,7 @@ export async function GET(
       }
     };
 
-    // Step 1: Get stock price data for daily and weekly abnormal-move detection
-    const stockDaily = await getSeries(
-      `${upperSymbol}:daily:compact`,
-      () => getDailyTimeSeries(upperSymbol, 'compact'),
-      upperSymbol
-    );
-    const stockWeekly = await getSeries(
-      `${upperSymbol}:weekly`,
-      () => getWeeklyTimeSeries(upperSymbol),
-      upperSymbol
-    );
-
-    // Step 2: Get SPY (S&P 500) data for relative comparison
+    // Step 1: Fetch SPY first (shared across all symbols) so it’s cached for subsequent requests
     const spyDaily = await getSeries(
       'SPY:daily:compact',
       () => getDailyTimeSeries('SPY', 'compact'),
@@ -68,6 +57,18 @@ export async function GET(
       'SPY:weekly',
       () => getWeeklyTimeSeries('SPY'),
       'SPY'
+    );
+
+    // Step 2: Get stock price data for daily and weekly abnormal-move detection
+    const stockDaily = await getSeries(
+      `${upperSymbol}:daily:compact`,
+      () => getDailyTimeSeries(upperSymbol, 'compact'),
+      upperSymbol
+    );
+    const stockWeekly = await getSeries(
+      `${upperSymbol}:weekly`,
+      () => getWeeklyTimeSeries(upperSymbol),
+      upperSymbol
     );
 
     // Keep analysis recent so outputs reflect current narrative windows.
@@ -259,6 +260,30 @@ export async function GET(
           }
         }
       } catch {
+        // Continue to news-only fallback.
+      }
+
+      // Final fallback: use Finnhub company-news only (no price anomaly data).
+      // Surfaces recent news when candle data is unavailable (e.g. free tier restrictions).
+      try {
+        const toDate = new Date();
+        const fromDate = subDays(toDate, 14);
+        const from = format(fromDate, 'yyyy-MM-dd');
+        const to = format(toDate, 'yyyy-MM-dd');
+        const articles = await getCompanyNews(upperSymbol, from, to);
+        if (articles.length > 0) {
+          const quote = await getQuote(upperSymbol).catch(() => null);
+          const priceNow = quote?.price ?? 0;
+          const newsEvents = createNewsOnlyEvents(upperSymbol, articles, priceNow, weeklyStart);
+          if (newsEvents.length > 0) {
+            return NextResponse.json({
+              data: newsEvents,
+              stale: true,
+              error: 'Showing recent news only — price data unavailable due to provider limits',
+            });
+          }
+        }
+      } catch {
         // Fall through to empty response below.
       }
 
@@ -276,6 +301,67 @@ export async function GET(
       { status: 500 }
     );
   }
+}
+
+/**
+ * Create minimal StockEvents from recent company news when price data is unavailable.
+ */
+function createNewsOnlyEvents(
+  symbol: string,
+  articles: NewsArticle[],
+  priceNow: number,
+  minDate: string
+): StockEvent[] {
+  const seenDates = new Set<string>();
+  const events: StockEvent[] = [];
+
+  for (const article of articles) {
+    const date = article.publishedAt.slice(0, 10);
+    if (date < minDate || seenDates.has(date)) continue;
+    seenDates.add(date);
+
+    const title = article.headline.length > 80 ? article.headline.slice(0, 77) + '...' : article.headline;
+    const description = article.summary
+      ? `${article.summary.slice(0, 150)}${article.summary.length > 150 ? '...' : ''}`
+      : `${symbol} in the news on ${date}.`;
+
+    const id = crypto
+      .createHash('md5')
+      .update(`news:${symbol}:${date}:${article.id}`)
+      .digest('hex')
+      .slice(0, 12);
+
+    events.push({
+      id,
+      symbol,
+      date,
+      type: 'unknown',
+      title,
+      description,
+      impact: {
+        magnitude: 'moderate',
+        direction: 'positive',
+        absoluteMove: 0,
+        percentMove: 0,
+        volumeSpike: 1,
+      },
+      priceAtEvent: priceNow,
+      priceNow,
+      changeSinceEvent: 0,
+      changePercentSinceEvent: 0,
+      dailyReturn: 0,
+      sp500Return: 0,
+      relativeReturn: 0,
+      zScore: 0,
+      newsArticles: [article],
+      recoveryDays: null,
+      impactScore: 0.5,
+    });
+
+    if (events.length >= 10) break;
+  }
+
+  return events.sort((a, b) => b.date.localeCompare(a.date));
 }
 
 function normalizeEvents(events: StockEvent[], minDate: string): StockEvent[] {

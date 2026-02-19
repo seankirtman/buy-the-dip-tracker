@@ -30,6 +30,7 @@ export function StockChart({
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [showEventModal, setShowEventModal] = useState(false);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsError, setEventsError] = useState<string | null>(null);
   const chartRef = useRef<ChartContainerHandle>(null);
 
   // Reset event state when changing symbols so event tab/data doesn't leak across pages.
@@ -38,6 +39,7 @@ export function StockChart({
     setEventsSymbol(null);
     setSelectedEventId(null);
     setShowEventModal(false);
+    setEventsError(null);
   }, [symbol]);
 
   // Fetch events when switching to event view
@@ -49,6 +51,7 @@ export function StockChart({
     const controller = new AbortController();
     async function fetchEvents() {
       setEventsLoading(true);
+      setEventsError(null);
       try {
         const res = await fetch(`/api/stock/${symbol}/events`, { signal: controller.signal });
         const text = await res.text();
@@ -56,13 +59,18 @@ export function StockChart({
         if (!cancelled && res.ok && json && Array.isArray(json.data)) {
           setEvents(json.data as StockEvent[]);
           setEventsSymbol(symbol);
+          if (json.error) {
+            setEventsError(json.error);
+          }
         } else if (!cancelled) {
           setEvents([]);
           setEventsSymbol(symbol);
+          setEventsError(json?.error || (res.ok ? null : `Server error (${res.status})`));
         }
-      } catch {
+      } catch (err) {
         if (!cancelled) {
           setEvents([]);
+          setEventsError(err instanceof Error && err.name !== 'AbortError' ? 'Failed to load events. Please try again.' : null);
         }
       } finally {
         if (!cancelled) setEventsLoading(false);
@@ -134,6 +142,7 @@ export function StockChart({
             <EventList
               events={events}
               loading={eventsLoading}
+              error={eventsError}
               selectedEventId={selectedEventId}
               onEventSelect={handleEventClick}
             />
