@@ -33,7 +33,9 @@ export async function getPriceTargetSummary(
 
   const url = `${BASE_URL}/price-target-summary?symbol=${encodeURIComponent(symbol)}&apikey=${apiKey}`;
 
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'StockEventTracker/1.0' },
+  });
   if (!res.ok) return null;
 
   const json = await res.json();

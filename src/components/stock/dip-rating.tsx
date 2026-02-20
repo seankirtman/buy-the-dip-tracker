@@ -9,10 +9,8 @@ interface DipRatingProps {
 }
 
 interface FmpSummary {
-  lastMonthCount: number;
-  lastMonthAvgTarget: number;
-  lastQuarterCount: number;
-  lastQuarterAvgTarget: number;
+  last30DaysCount: number;
+  last30DaysAvgTarget: number;
   publishers: string[];
 }
 
@@ -106,45 +104,41 @@ export function DipRating({ symbol, price }: DipRatingProps) {
           {gradeDescription(data.grade)}
         </span>
       </div>
-      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-text-muted">
-        {data.targetPrice != null && (
-          <span>
-            Target: {formatCurrency(data.targetPrice)}
-            {data.upsidePercent != null && (
-              <span className={data.upsidePercent >= 0 ? 'text-positive' : 'text-negative'}>
-                {' '}({data.upsidePercent >= 0 ? '+' : ''}{data.upsidePercent}%)
-              </span>
-            )}
-          </span>
-        )}
+      <div className="mt-2 space-y-1.5 text-xs text-text-muted">
         {data.totalAnalysts > 0 && (
-          <span>{data.totalAnalysts} analysts</span>
+          <div>
+            <span className="text-text-secondary font-medium">{data.totalAnalysts} analysts</span>
+            {data.targetPrice != null && (
+              <>
+                {' · target '}
+                {formatCurrency(data.targetPrice)}
+                {data.upsidePercent != null && (
+                  <span className={data.upsidePercent >= 0 ? 'text-positive' : 'text-negative'}>
+                    {' '}({data.upsidePercent >= 0 ? '+' : ''}{data.upsidePercent}%)
+                  </span>
+                )}
+              </>
+            )}
+          </div>
         )}
-      </div>
-      {data.fmpSummary && data.fmpSummary.lastMonthCount > 0 && (
-        <div className="mt-2 space-y-1 text-xs text-text-muted">
+        {data.fmpSummary && data.fmpSummary.last30DaysCount > 0 && (
           <div>
             <span className="text-text-secondary font-medium">
-              {data.fmpSummary.lastMonthCount} target{data.fmpSummary.lastMonthCount !== 1 ? 's' : ''} this month
+              Price target updates in last 30 days: {data.fmpSummary.last30DaysCount}
             </span>
             {' · avg '}
-            {formatCurrency(data.fmpSummary.lastMonthAvgTarget)}
-            {data.fmpSummary.lastQuarterCount > data.fmpSummary.lastMonthCount && (
+            {formatCurrency(data.fmpSummary.last30DaysAvgTarget)}
+            {data.fmpSummary.publishers.length > 0 && (
               <span className="text-text-muted/70">
-                {' · '}{data.fmpSummary.lastQuarterCount} this quarter
+                {' '}via {data.fmpSummary.publishers.slice(0, 3).join(', ')}
+                {data.fmpSummary.publishers.length > 3 && (
+                  <span> +{data.fmpSummary.publishers.length - 3} more</span>
+                )}
               </span>
             )}
           </div>
-          {data.fmpSummary.publishers.length > 0 && (
-            <div className="text-text-muted/70">
-              via {data.fmpSummary.publishers.slice(0, 3).join(', ')}
-              {data.fmpSummary.publishers.length > 3 && (
-                <span> +{data.fmpSummary.publishers.length - 3} more</span>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

@@ -102,13 +102,21 @@ export async function GET(
           upperSymbol
         ), []),
       fetchSafe<FmpPriceTargetSummary | null>('fmp', () =>
-        cacheManager.getOrFetch<FmpPriceTargetSummary | null>(
-          'fundamentals_cache',
-          `fmp-pts:${upperSymbol}`,
-          43200,
-          () => getPriceTargetSummary(upperSymbol),
-          upperSymbol
-        ), null),
+        cacheManager
+          .getOrFetch<FmpPriceTargetSummary | null>(
+            'fundamentals_cache',
+            `fmp-pts:${upperSymbol}`,
+            43200,
+            async () => {
+              const result = await getPriceTargetSummary(upperSymbol);
+              if (!result) throw new Error('FMP_no_data');
+              return result;
+            },
+            upperSymbol
+          )
+          .catch(() => null),
+        null
+      ),
     ]);
 
     if (!consensus && trends.length === 0 && !fmpSummary) {
@@ -142,10 +150,8 @@ export async function GET(
       breakdown: { upsideScore, consensusScore, momentumScore },
       fmpSummary: fmpSummary
         ? {
-            lastMonthCount: fmpSummary.lastMonthCount,
-            lastMonthAvgTarget: fmpSummary.lastMonthAvgPriceTarget,
-            lastQuarterCount: fmpSummary.lastQuarterCount,
-            lastQuarterAvgTarget: fmpSummary.lastQuarterAvgPriceTarget,
+            last30DaysCount: fmpSummary.lastMonthCount,
+            last30DaysAvgTarget: fmpSummary.lastMonthAvgPriceTarget,
             publishers: fmpSummary.publishers.slice(0, 5),
           }
         : null,
