@@ -74,14 +74,26 @@ export async function GET(
     }
   }
 
-  const systemPrompt = `You are a concise financial analyst. Write a single paragraph (up to 6 sentences) summarizing a stock's position within its 52-week range. Do not give explicit buy/sell advice. Be neutral and fact-based.`;
-  const userPrompt = `Context: ${contextParts.join(' ')}
+  const systemPrompt = `You are a sharp, neutral equity analyst writing for retail investors.
+Write one paragraph (3-6 sentences) explaining the narrative behind the stock's current position in its 52-week range.
+Do NOT only describe price movement. Identify likely drivers behind the move (e.g., earnings revisions, guidance, margins, demand trends, product cycle, regulation, macro/rates, sector rotation, valuation multiple changes, sentiment).
+Focus on the story causing the stock to be where it is now, not just the fact that it moved.
+Use provided context as evidence, infer plausible causes, and clearly separate what is signal vs uncertainty.
+Be balanced: include one upside continuation trigger and one downside risk from here.
+No direct buy/sell advice, no price targets, and no certainty language.
+If concrete drivers are missing, provide the 2-3 most plausible hypotheses and label them as hypotheses.`;
+  const userPrompt = `Stock context:
+${contextParts.join(' ')}
 
-Range tier: ${tier}% (${tier === '1-25' ? 'near 52-week low' : tier === '75-99' ? 'near 52-week high' : 'mid-range'})
+Range tier:
+${tier}% (${tier === '1-25' ? 'near 52-week low' : tier === '75-99' ? 'near 52-week high' : 'mid-range'})
 
+Tier focus:
 ${guidance}
 
-Write the summary paragraph:`;
+Task:
+Write one concise paragraph that explains the story driving the stock's current range position.
+Go beyond price action: explain what is likely causing the move, why investors are positioning this way now, and what specific developments could move the stock higher or lower next.`;
 
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -96,8 +108,10 @@ Write the summary paragraph:`;
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        max_tokens: 350,
-        temperature: 0.5,
+        // GPT-5-mini uses max_completion_tokens and can spend tokens on reasoning.
+        // Keep reasoning minimal so we consistently get visible output text.
+        max_completion_tokens: 500,
+        reasoning_effort: 'minimal',
       }),
     });
 
@@ -105,7 +119,7 @@ Write the summary paragraph:`;
       const err = await res.text();
       console.error('OpenAI API error:', res.status, err);
       return NextResponse.json(
-        { error: 'Failed to generate summary' },
+        { error: `Failed to generate summary (${res.status})` },
         { status: 502 }
       );
     }

@@ -124,9 +124,13 @@ export const ChartContainer = forwardRef<ChartContainerHandle, ChartContainerPro
         height: 500,
         timeScale: {
           borderColor: 'rgba(51, 65, 85, 0.4)',
-          timeVisible: true,
+          timeVisible: timePeriod === '1D',
+          secondsVisible: false,
           minBarSpacing: 3,
           barSpacing: 6,
+          rightOffset: 0,
+          fixLeftEdge: true,
+          fixRightEdge: true,
           tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) =>
             formatTickLabel(time, tickMarkType, timePeriod),
         },
@@ -181,9 +185,10 @@ export const ChartContainer = forwardRef<ChartContainerHandle, ChartContainerPro
       seriesRef.current = series;
       volumeRef.current = volume;
 
-      // Resize observer
+      // Resize observer: update width and re-fit so chart always fills container
       const ro = new ResizeObserver((entries) => {
         chart.applyOptions({ width: entries[0].contentRect.width });
+        chart.timeScale().fitContent();
       });
       ro.observe(containerRef.current);
 
@@ -202,6 +207,8 @@ export const ChartContainer = forwardRef<ChartContainerHandle, ChartContainerPro
       if (!chartRef.current) return;
       chartRef.current.applyOptions({
         timeScale: {
+          timeVisible: timePeriod === '1D',
+          secondsVisible: false,
           tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) =>
             formatTickLabel(time, tickMarkType, timePeriod),
         },
