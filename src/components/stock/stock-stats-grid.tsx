@@ -2,6 +2,7 @@ import { formatCurrency, formatLargeNumber, formatVolume } from '@/lib/utils/for
 import type { StockQuote, TimeSeriesData } from '@/lib/types/stock';
 import type { CompanyProfile } from '@/lib/api/finnhub';
 import { RangeSummary } from './range-summary';
+import { DipRating } from './dip-rating';
 
 interface StockStatsGridProps {
   quote: StockQuote | null;
@@ -108,6 +109,7 @@ export function StockStatsGrid({ quote, history, profile }: StockStatsGridProps)
                     <span>{formatCurrency(week52High)}</span>
                   </div>
                 </div>
+                <DipRating symbol={quote.symbol ?? quote.name} price={quote.price} />
               </>
             )}
           </StatSection>

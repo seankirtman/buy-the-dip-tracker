@@ -221,6 +221,36 @@ export async function getQuote(symbol: string): Promise<StockQuote> {
   };
 }
 
+export interface AnalystConsensus {
+  targetPrice: number | null;
+  strongBuy: number;
+  buy: number;
+  hold: number;
+  sell: number;
+  strongSell: number;
+}
+
+export async function getAnalystConsensus(
+  symbol: string
+): Promise<AnalystConsensus | null> {
+  checkRateLimit('alpha_vantage');
+
+  const raw = (await fetchAV({ function: 'OVERVIEW', symbol })) as Record<string, string>;
+  recordApiCall('alpha_vantage', 'OVERVIEW', symbol);
+
+  const targetStr = raw['AnalystTargetPrice'];
+  const targetPrice = targetStr ? parseFloat(targetStr) : null;
+
+  return {
+    targetPrice: targetPrice && targetPrice > 0 ? targetPrice : null,
+    strongBuy: parseInt(raw['AnalystRatingStrongBuy'] ?? '0', 10) || 0,
+    buy: parseInt(raw['AnalystRatingBuy'] ?? '0', 10) || 0,
+    hold: parseInt(raw['AnalystRatingHold'] ?? '0', 10) || 0,
+    sell: parseInt(raw['AnalystRatingSell'] ?? '0', 10) || 0,
+    strongSell: parseInt(raw['AnalystRatingStrongSell'] ?? '0', 10) || 0,
+  };
+}
+
 export async function searchSymbol(query: string): Promise<SearchResult[]> {
   checkRateLimit('alpha_vantage');
 

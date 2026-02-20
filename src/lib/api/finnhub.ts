@@ -124,6 +124,40 @@ export async function getCompanyBasicFinancials(
   return { peRatio };
 }
 
+export interface RecommendationTrend {
+  period: string;
+  strongBuy: number;
+  buy: number;
+  hold: number;
+  sell: number;
+  strongSell: number;
+}
+
+export async function getRecommendationTrends(
+  symbol: string
+): Promise<RecommendationTrend[]> {
+  checkRateLimit('finnhub');
+
+  const apiKey = getApiKey();
+  const url = `${BASE_URL}/stock/recommendation?symbol=${encodeURIComponent(symbol)}&token=${apiKey}`;
+
+  const res = await fetch(url);
+  if (!res.ok) return [];
+
+  const json = await res.json();
+  recordApiCall('finnhub', 'stock/recommendation', symbol);
+
+  if (!Array.isArray(json)) return [];
+  return json.slice(0, 4).map((r: Record<string, unknown>) => ({
+    period: String(r.period ?? ''),
+    strongBuy: Number(r.strongBuy ?? 0),
+    buy: Number(r.buy ?? 0),
+    hold: Number(r.hold ?? 0),
+    sell: Number(r.sell ?? 0),
+    strongSell: Number(r.strongSell ?? 0),
+  }));
+}
+
 export async function searchSymbol(query: string): Promise<SearchResult[]> {
   checkRateLimit('finnhub');
 
