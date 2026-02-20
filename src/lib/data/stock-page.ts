@@ -1,12 +1,12 @@
 import { cacheManager } from '@/lib/db/cache';
 import {
   getQuote,
-  getCompanyProfile,
-  getCompanyBasicFinancials,
-  getDailyCandlesTimeSeries,
-} from '@/lib/api/finnhub';
-import type { CompanyProfile } from '@/lib/api/finnhub';
-import { getDailyTimeSeries, getWeeklyTimeSeries } from '@/lib/api/alpha-vantage';
+  getDailyTimeSeries,
+  getWeeklyTimeSeries,
+} from '@/lib/api/yahoo-finance';
+import type { CompanyProfile } from '@/lib/api/yahoo-finance';
+import { getQuote as getTwelveDataQuote, getDailyTimeSeries as getTwelveDataDaily, getWeeklyTimeSeries as getTwelveDataWeekly } from '@/lib/api/twelve-data';
+import { getQuote as getStockDataQuote, getDailyTimeSeries as getStockDataDaily, getWeeklyTimeSeries as getStockDataWeekly } from '@/lib/api/stockdata';
 import { RateLimitError } from '@/lib/api/api-queue';
 import { isMarketHours } from '@/lib/utils/date';
 import { filterDataByPeriod, getTTLForPeriod } from '@/lib/utils/date';
@@ -26,15 +26,26 @@ export async function getStockPageData(
   const upperSymbol = symbol.toUpperCase();
   let stale = false;
 
-  // Fetch quote
+  // Fetch quote (Yahoo → Twelve Data → StockData)
   const quoteTtl = isMarketHours() ? 300 : 3600;
+  const getQuoteWithFallbacks = async () => {
+    try {
+      return await getQuote(upperSymbol);
+    } catch {
+      try {
+        return await getTwelveDataQuote(upperSymbol);
+      } catch {
+        return await getStockDataQuote(upperSymbol);
+      }
+    }
+  };
   let quote: StockQuote | null = null;
   try {
     quote = await cacheManager.getOrFetch(
       'quote_cache',
       upperSymbol,
       quoteTtl,
-      () => getQuote(upperSymbol)
+      getQuoteWithFallbacks
     );
   } catch (error) {
     const cached = cacheManager.getCached<StockQuote>('quote_cache', upperSymbol);
@@ -47,41 +58,10 @@ export async function getStockPageData(
     }
   }
 
-  // Fetch company profile (market cap) - non-blocking, cache 24h
-  let profile: CompanyProfile | null = null;
-  try {
-    profile = await cacheManager.getOrFetch<CompanyProfile | null>(
-      'profile_cache',
-      upperSymbol,
-      86400, // 24h TTL
-      () => getCompanyProfile(upperSymbol)
-    );
-  } catch {
-    // Optional - don't fail page if profile fails
-  }
+  // Profile skipped for Yahoo Finance test mode
+  const profile: CompanyProfile | null = null;
 
-  // Fetch fundamentals (P/E) - non-blocking, cache 24h
-  let fundamentals: { peRatio: number | null } | null = null;
-  try {
-    fundamentals = await cacheManager.getOrFetch<{ peRatio: number | null } | null>(
-      'fundamentals_cache',
-      upperSymbol,
-      86400, // 24h TTL
-      async () => {
-        const f = await getCompanyBasicFinancials(upperSymbol);
-        return f ? { peRatio: f.peRatio } : null;
-      }
-    );
-  } catch {
-    // Optional - don't fail page if fundamentals fail
-  }
-
-  // Merge P/E into quote for UI
-  if (quote && fundamentals?.peRatio != null) {
-    quote = { ...quote, peRatio: fundamentals.peRatio };
-  }
-
-  // Fetch history (use weekly for 6M+/YTD/1Y - daily 'full' is premium-only)
+  // Fetch history (Yahoo Finance - testing only) (use weekly for 6M+/YTD/1Y - daily 'full' is premium-only)
   const useWeekly = period === '1Y' || period === '6M' || period === 'YTD';
   const cacheKey = useWeekly
     ? `${upperSymbol}:weekly`
@@ -96,7 +76,7 @@ export async function getStockPageData(
       () =>
         useWeekly
           ? getWeeklyTimeSeries(upperSymbol)
-          : getDailyTimeSeries(upperSymbol, 'compact'),
+          : getDailyTimeSeries(upperSymbol),
       upperSymbol
     );
     const filteredPoints = filterDataByPeriod(fullData.dataPoints, period);
@@ -108,31 +88,30 @@ export async function getStockPageData(
       history = { ...cached, dataPoints: filteredPoints };
       stale = true;
     } else {
-      // Fallback provider for history when Alpha Vantage is unavailable/rate-limited.
-      try {
-        const finnhubDaily = await cacheManager.getOrFetch<TimeSeriesData>(
-          'price_cache',
-          `${upperSymbol}:finnhub:daily`,
-          ttl,
-          () => getDailyCandlesTimeSeries(upperSymbol),
-          upperSymbol
-        );
-        const filteredPoints = filterDataByPeriod(finnhubDaily.dataPoints, period);
-        history = { ...finnhubDaily, dataPoints: filteredPoints };
-        stale = true;
-      } catch (fallbackError) {
-        const isExpectedProviderDenial =
-          fallbackError instanceof Error &&
-          (fallbackError.message.includes('Finnhub API error: 401') ||
-            fallbackError.message.includes('Finnhub API error: 403') ||
-            fallbackError.message.includes('Finnhub API error: 429'));
-        if (!(fallbackError instanceof RateLimitError) && !isExpectedProviderDenial) {
-          console.error('History fallback fetch failed:', fallbackError);
+      const historyFallbacks: Array<{ key: string; fetcher: () => Promise<TimeSeriesData> }> = [
+        { key: 'twelve_data', fetcher: () => (useWeekly ? getTwelveDataWeekly(upperSymbol) : getTwelveDataDaily(upperSymbol)) },
+        { key: 'stockdata', fetcher: () => (useWeekly ? getStockDataWeekly(upperSymbol) : getStockDataDaily(upperSymbol)) },
+      ];
+      for (const fb of historyFallbacks) {
+        try {
+          const fallbackData = await cacheManager.getOrFetch<TimeSeriesData>(
+            'price_cache',
+            `${upperSymbol}:${fb.key}:${useWeekly ? 'weekly' : 'daily'}`,
+            ttl,
+            fb.fetcher,
+            upperSymbol
+          );
+          const filteredPoints = filterDataByPeriod(fallbackData.dataPoints, period);
+          history = { ...fallbackData, dataPoints: filteredPoints };
+          stale = true;
+          break;
+        } catch {
+          // Try next fallback
         }
       }
     }
 
-    if (!(error instanceof RateLimitError)) {
+    if (!(error instanceof RateLimitError) && !history) {
       console.error('History fetch failed:', error);
     }
   }

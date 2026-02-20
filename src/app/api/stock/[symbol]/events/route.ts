@@ -1,7 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cacheManager, CacheManager } from '@/lib/db/cache';
-import { getDailyTimeSeries, getWeeklyTimeSeries } from '@/lib/api/alpha-vantage';
-import { getCompanyProfile, getCompanyNews, getDailyCandlesTimeSeries, getQuote } from '@/lib/api/finnhub';
+import {
+  getDailyTimeSeries,
+  getWeeklyTimeSeries,
+  getCompanyProfile,
+  getCompanyNews,
+  getQuote,
+} from '@/lib/api/yahoo-finance';
+import {
+  getDailyTimeSeries as getTwelveDataDaily,
+  getWeeklyTimeSeries as getTwelveDataWeekly,
+} from '@/lib/api/twelve-data';
+import {
+  getDailyTimeSeries as getStockDataDaily,
+  getWeeklyTimeSeries as getStockDataWeekly,
+} from '@/lib/api/stockdata';
 import { detectAnomalies } from '@/lib/events/detector';
 import { correlateNews } from '@/lib/events/correlator';
 import { scoreAndRankEvents } from '@/lib/events/scorer';
@@ -26,48 +39,67 @@ export async function GET(
   try {
     const getSeries = async (
       key: string,
-      fetcher: () => Promise<TimeSeriesData>,
+      fetchers: Array<() => Promise<TimeSeriesData>>,
       symbolForCache: string
     ): Promise<TimeSeriesData> => {
-      try {
-        return await cacheManager.getOrFetch<TimeSeriesData>(
-          'price_cache',
-          key,
-          604800, // 7 day TTL
-          fetcher,
-          symbolForCache
-        );
-      } catch (error) {
-        const cached = cacheManager.getCached<TimeSeriesData>('price_cache', key);
-        if (cached) {
-          stale = true;
-          return cached;
+      for (const fetcher of fetchers) {
+        try {
+          return await cacheManager.getOrFetch<TimeSeriesData>(
+            'price_cache',
+            key,
+            604800, // 7 day TTL
+            fetcher,
+            symbolForCache
+          );
+        } catch {
+          const cached = cacheManager.getCached<TimeSeriesData>('price_cache', key);
+          if (cached) {
+            stale = true;
+            return cached;
+          }
+          // Try next fetcher
         }
-        throw error;
       }
+      throw new Error('All history providers failed');
     };
 
     // Step 1: Fetch SPY first (shared across all symbols) so it’s cached for subsequent requests
     const spyDaily = await getSeries(
       'SPY:daily:compact',
-      () => getDailyTimeSeries('SPY', 'compact'),
+      [
+        () => getDailyTimeSeries('SPY'),
+        () => getTwelveDataDaily('SPY'),
+        () => getStockDataDaily('SPY'),
+      ],
       'SPY'
     );
     const spyWeekly = await getSeries(
       'SPY:weekly',
-      () => getWeeklyTimeSeries('SPY'),
+      [
+        () => getWeeklyTimeSeries('SPY'),
+        () => getTwelveDataWeekly('SPY'),
+        () => getStockDataWeekly('SPY'),
+      ],
       'SPY'
     );
 
     // Step 2: Get stock price data for daily and weekly abnormal-move detection
     const stockDaily = await getSeries(
       `${upperSymbol}:daily:compact`,
-      () => getDailyTimeSeries(upperSymbol, 'compact'),
+      [
+        () => getDailyTimeSeries(upperSymbol),
+        () => getTwelveDataDaily(upperSymbol),
+        () => getStockDataDaily(upperSymbol),
+      ],
       upperSymbol
     );
     const stockWeekly = await getSeries(
       `${upperSymbol}:weekly`,
-      () => getWeeklyTimeSeries(upperSymbol),
+      [
+        () => getWeeklyTimeSeries(upperSymbol),
+        () => getTwelveDataWeekly(upperSymbol),
+        () => getStockDataWeekly(upperSymbol),
+      ],
       upperSymbol
     );
 
@@ -165,126 +197,6 @@ export async function GET(
           stale: true,
           error: error.message,
         });
-      }
-
-      // Fallback path for production: compute events from Finnhub daily candles only.
-      // This avoids Alpha Vantage limits while still surfacing useful event context.
-      try {
-        const [stockWeeklyCached, spyWeeklyCached] = [
-          cacheManager.getCached<TimeSeriesData>('price_cache', `${upperSymbol}:weekly`),
-          cacheManager.getCached<TimeSeriesData>('price_cache', 'SPY:weekly'),
-        ];
-
-        if (
-          stockWeeklyCached?.dataPoints?.length &&
-          spyWeeklyCached?.dataPoints?.length &&
-          stockWeeklyCached.dataPoints.length >= 20 &&
-          spyWeeklyCached.dataPoints.length >= 20
-        ) {
-          let companyName: string | undefined;
-          try {
-            const profile = await getCompanyProfile(upperSymbol);
-            companyName = profile?.name;
-          } catch {
-            // Optional enrichment only.
-          }
-
-          const weeklyAnchors = selectTopRelativeMoveAnchors(
-            stockWeeklyCached.dataPoints,
-            spyWeeklyCached.dataPoints,
-            weeklyStart,
-            'weekly'
-          );
-
-          if (weeklyAnchors.length > 0) {
-            const correlated = await correlateNews(upperSymbol, weeklyAnchors, companyName);
-            const events = normalizeEvents(
-              scoreAndRankEvents(correlated, stockWeeklyCached.dataPoints, upperSymbol),
-              weeklyStart
-            );
-            return NextResponse.json({
-              data: events,
-              stale: true,
-              error: 'Using cached weekly date-anchored fallback due to provider limits',
-            });
-          }
-        }
-      } catch {
-        // Continue to next fallback.
-      }
-
-      try {
-        const [stockDaily, spyDaily] = await Promise.all([
-          getDailyCandlesTimeSeries(upperSymbol),
-          getDailyCandlesTimeSeries('SPY'),
-        ]);
-
-        if (stockDaily.dataPoints.length >= 50 && spyDaily.dataPoints.length >= 50) {
-          let companyName: string | undefined;
-          try {
-            const profile = await getCompanyProfile(upperSymbol);
-            companyName = profile?.name;
-          } catch {
-            // Optional enrichment only.
-          }
-
-          const dailyAnomalies = detectAnomalies(stockDaily.dataPoints, spyDaily.dataPoints, {
-            rollingWindow: 40,
-            zScoreThreshold: 1.9,
-            volumeWindow: 20,
-            timeframe: 'daily',
-          })
-            .sort((a, b) => Math.abs(b.zScore) - Math.abs(a.zScore))
-            .slice(0, 10);
-
-          // If strict anomalies are empty, use top relative-move dates as fallback anchors.
-          const fallbackAnchors =
-            dailyAnomalies.length > 0
-              ? dailyAnomalies
-              : selectTopRelativeMoveAnchors(stockDaily.dataPoints, spyDaily.dataPoints, weeklyStart);
-
-          if (fallbackAnchors.length > 0) {
-            const correlated = await correlateNews(upperSymbol, fallbackAnchors, companyName);
-            const events = normalizeEvents(
-              scoreAndRankEvents(correlated, stockDaily.dataPoints, upperSymbol),
-              weeklyStart
-            );
-            return NextResponse.json({
-              data: events,
-              stale: true,
-              error:
-                dailyAnomalies.length > 0
-                  ? 'Using Finnhub events fallback due to Alpha Vantage limits'
-                  : 'Using date-anchored Finnhub fallback due to provider limits',
-            });
-          }
-        }
-      } catch {
-        // Continue to news-only fallback.
-      }
-
-      // Final fallback: use Finnhub company-news only (no price anomaly data).
-      // Surfaces recent news when candle data is unavailable (e.g. free tier restrictions).
-      try {
-        const toDate = new Date();
-        const fromDate = subDays(toDate, 14);
-        const from = format(fromDate, 'yyyy-MM-dd');
-        const to = format(toDate, 'yyyy-MM-dd');
-        const articles = await getCompanyNews(upperSymbol, from, to);
-        if (articles.length > 0) {
-          const quote = await getQuote(upperSymbol).catch(() => null);
-          const priceNow = quote?.price ?? 0;
-          const newsEvents = createNewsOnlyEvents(upperSymbol, articles, priceNow, weeklyStart);
-          if (newsEvents.length > 0) {
-            return NextResponse.json({
-              data: newsEvents,
-              stale: true,
-              error: 'Showing recent news only — price data unavailable due to provider limits',
-            });
-          }
-        }
-      } catch {
-        // Fall through to empty response below.
       }
 
       // No cache/fallback available: return empty list so UI stays functional.

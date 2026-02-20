@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cacheManager } from '@/lib/db/cache';
-import { searchSymbol as searchFinnhub } from '@/lib/api/finnhub';
-import { searchSymbol as searchAlphaVantage } from '@/lib/api/alpha-vantage';
+import { searchSymbol } from '@/lib/api/yahoo-finance';
+import { searchSymbol as searchTwelveData } from '@/lib/api/twelve-data';
 import { RateLimitError } from '@/lib/api/api-queue';
 
-// Alpha Vantage SYMBOL_SEARCH sometimes returns empty for valid tickers (e.g. CRM).
 // When results are empty and query looks like a ticker, add it as a fallback option.
 const TICKER_PATTERN = /^[A-Za-z]{2,5}$/;
 
@@ -15,24 +14,6 @@ function withTickerFallback(data: { symbol: string; name: string; type: string; 
   return [{ symbol: upper, name: upper, type: 'Equity', region: 'United States', currency: 'USD' }];
 }
 
-async function searchWithFallbackProviders(query: string) {
-  try {
-    const finnhubResults = await searchFinnhub(query);
-    if (finnhubResults.length > 0) return finnhubResults;
-  } catch {
-    // Try Alpha Vantage below.
-  }
-
-  try {
-    const alphaResults = await searchAlphaVantage(query);
-    if (alphaResults.length > 0) return alphaResults;
-  } catch {
-    // If both providers fail, return empty and let route fallback handle ticker-only queries.
-  }
-
-  return [];
-}
-
 export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams.get('q');
 
@@ -40,12 +21,21 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Query parameter "q" is required' }, { status: 400 });
   }
 
+  const searchWithFallbacks = async () => {
+    try {
+      const results = await searchSymbol(query);
+      if (results.length > 0) return results;
+    } catch {
+      // Try Twelve Data below
+    }
+    return await searchTwelveData(query);
+  };
   try {
     const data = await cacheManager.getOrFetch(
       'news_cache', // reuse news_cache table for search results
       `search:${query.toUpperCase()}`,
       86400, // Cache search results for 24 hours
-      () => searchWithFallbackProviders(query),
+      searchWithFallbacks,
       query
     );
 

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cacheManager } from '@/lib/db/cache';
-import { getQuote } from '@/lib/api/finnhub';
+import { getQuote } from '@/lib/api/yahoo-finance';
+import { getQuote as getTwelveDataQuote } from '@/lib/api/twelve-data';
+import { getQuote as getStockDataQuote } from '@/lib/api/stockdata';
 import { RateLimitError } from '@/lib/api/api-queue';
 import { isMarketHours } from '@/lib/utils/date';
 
@@ -12,12 +14,23 @@ export async function GET(
   const upperSymbol = symbol.toUpperCase();
   const ttl = isMarketHours() ? 300 : 3600; // 5 min during market hours, 1 hr after
 
+  const getQuoteWithFallbacks = async () => {
+    try {
+      return await getQuote(upperSymbol);
+    } catch {
+      try {
+        return await getTwelveDataQuote(upperSymbol);
+      } catch {
+        return await getStockDataQuote(upperSymbol);
+      }
+    }
+  };
   try {
     const data = await cacheManager.getOrFetch(
       'quote_cache',
       upperSymbol,
       ttl,
-      () => getQuote(upperSymbol)
+      getQuoteWithFallbacks
     );
 
     return NextResponse.json({ data });

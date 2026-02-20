@@ -3,12 +3,10 @@ import { cacheManager } from '@/lib/db/cache';
 import {
   getDailyTimeSeries,
   getWeeklyTimeSeries,
-  getIntradayTimeSeries as getAlphaIntradayTimeSeries,
-} from '@/lib/api/alpha-vantage';
-import {
-  getIntradayTimeSeries as getFinnhubIntradayTimeSeries,
-  getDailyCandlesTimeSeries,
-} from '@/lib/api/finnhub';
+  getIntradayTimeSeries,
+} from '@/lib/api/yahoo-finance';
+import { getDailyTimeSeries as getTwelveDataDaily, getWeeklyTimeSeries as getTwelveDataWeekly } from '@/lib/api/twelve-data';
+import { getDailyTimeSeries as getStockDataDaily, getWeeklyTimeSeries as getStockDataWeekly } from '@/lib/api/stockdata';
 import { RateLimitError } from '@/lib/api/api-queue';
 import { filterDataByPeriod, getTTLForPeriod } from '@/lib/utils/date';
 import type { TimePeriod, TimeSeriesData } from '@/lib/types/stock';
@@ -43,34 +41,16 @@ export async function GET(
   const ttl = getTTLForPeriod(period);
 
   try {
-    const fetchIntradayWithFallback = async (): Promise<TimeSeriesData> => {
-      try {
-        const intraday = await getFinnhubIntradayTimeSeries(upperSymbol);
-        if (intraday.dataPoints.length >= 4) return intraday;
-      } catch {
-        // Try next provider below.
-      }
-
-      try {
-        const intraday = await getAlphaIntradayTimeSeries(upperSymbol);
-        if (intraday.dataPoints.length >= 4) return intraday;
-      } catch {
-        // Fall through to error below.
-      }
-
-      throw new Error('Intraday data unavailable');
-    };
-
     const fullData = await cacheManager.getOrFetch<TimeSeriesData>(
       'price_cache',
       cacheKey,
       ttl,
       () =>
         useIntraday
-          ? fetchIntradayWithFallback()
+          ? getIntradayTimeSeries(upperSymbol)
           : useWeekly
             ? getWeeklyTimeSeries(upperSymbol)
-            : getDailyTimeSeries(upperSymbol, 'compact'),
+            : getDailyTimeSeries(upperSymbol),
       upperSymbol
     );
 
@@ -99,25 +79,28 @@ export async function GET(
     }
 
     if (!useIntraday) {
-      try {
-        const finnhubDaily = await cacheManager.getOrFetch<TimeSeriesData>(
-          'price_cache',
-          `${upperSymbol}:finnhub:daily`,
-          ttl,
-          () => getDailyCandlesTimeSeries(upperSymbol),
-          upperSymbol
-        );
-        const filteredPoints = filterDataByPeriod(finnhubDaily.dataPoints, period);
-        return NextResponse.json({
-          data: {
-            ...finnhubDaily,
-            dataPoints: filteredPoints,
-          },
-          stale: true,
-          error: 'Using Finnhub history fallback',
-        });
-      } catch {
-        // Continue to original error response path below.
+      const historyFallbacks: Array<{ key: string; fetcher: () => Promise<TimeSeriesData> }> = [
+        { key: 'twelve_data', fetcher: () => (useWeekly ? getTwelveDataWeekly(upperSymbol) : getTwelveDataDaily(upperSymbol)) },
+        { key: 'stockdata', fetcher: () => (useWeekly ? getStockDataWeekly(upperSymbol) : getStockDataDaily(upperSymbol)) },
+      ];
+      for (const fb of historyFallbacks) {
+        try {
+          const fallbackData = await cacheManager.getOrFetch<TimeSeriesData>(
+            'price_cache',
+            `${upperSymbol}:${fb.key}:${useWeekly ? 'weekly' : 'daily'}`,
+            ttl,
+            fb.fetcher,
+            upperSymbol
+          );
+          const filteredPoints = filterDataByPeriod(fallbackData.dataPoints, period);
+          return NextResponse.json({
+            data: { ...fallbackData, dataPoints: filteredPoints },
+            stale: true,
+            error: `Using ${fb.key} history fallback`,
+          });
+        } catch {
+          // Try next fallback
+        }
       }
     }
 
