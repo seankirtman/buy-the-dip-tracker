@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cacheManager } from '@/lib/db/cache';
 import { searchSymbol as searchFinnhub } from '@/lib/api/finnhub';
 import { searchSymbol as searchAlphaVantage } from '@/lib/api/alpha-vantage';
+import { searchSymbol as searchTwelveData } from '@/lib/api/twelve-data';
 import { RateLimitError } from '@/lib/api/api-queue';
 
 // Alpha Vantage SYMBOL_SEARCH sometimes returns empty for valid tickers (e.g. CRM).
@@ -27,7 +28,14 @@ async function searchWithFallbackProviders(query: string) {
     const alphaResults = await searchAlphaVantage(query);
     if (alphaResults.length > 0) return alphaResults;
   } catch {
-    // If both providers fail, return empty and let route fallback handle ticker-only queries.
+    // Try Twelve Data below.
+  }
+
+  try {
+    const twelveDataResults = await searchTwelveData(query);
+    if (twelveDataResults.length > 0) return twelveDataResults;
+  } catch {
+    // If all providers fail, return empty.
   }
 
   return [];

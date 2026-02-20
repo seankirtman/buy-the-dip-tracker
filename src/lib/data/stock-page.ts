@@ -7,6 +7,8 @@ import {
 } from '@/lib/api/finnhub';
 import type { CompanyProfile } from '@/lib/api/finnhub';
 import { getDailyTimeSeries, getWeeklyTimeSeries } from '@/lib/api/alpha-vantage';
+import { getQuote as getTwelveDataQuote, getDailyTimeSeries as getTwelveDataDaily, getWeeklyTimeSeries as getTwelveDataWeekly } from '@/lib/api/twelve-data';
+import { getQuote as getStockDataQuote, getDailyTimeSeries as getStockDataDaily, getWeeklyTimeSeries as getStockDataWeekly } from '@/lib/api/stockdata';
 import { RateLimitError } from '@/lib/api/api-queue';
 import { isMarketHours } from '@/lib/utils/date';
 import { filterDataByPeriod, getTTLForPeriod } from '@/lib/utils/date';
@@ -26,15 +28,26 @@ export async function getStockPageData(
   const upperSymbol = symbol.toUpperCase();
   let stale = false;
 
-  // Fetch quote
+  // Fetch quote (Finnhub → Twelve Data → StockData)
   const quoteTtl = isMarketHours() ? 300 : 3600;
+  const getQuoteWithFallbacks = async () => {
+    try {
+      return await getQuote(upperSymbol);
+    } catch {
+      try {
+        return await getTwelveDataQuote(upperSymbol);
+      } catch {
+        return await getStockDataQuote(upperSymbol);
+      }
+    }
+  };
   let quote: StockQuote | null = null;
   try {
     quote = await cacheManager.getOrFetch(
       'quote_cache',
       upperSymbol,
       quoteTtl,
-      () => getQuote(upperSymbol)
+      getQuoteWithFallbacks
     );
   } catch (error) {
     const cached = cacheManager.getCached<StockQuote>('quote_cache', upperSymbol);
@@ -108,26 +121,35 @@ export async function getStockPageData(
       history = { ...cached, dataPoints: filteredPoints };
       stale = true;
     } else {
-      // Fallback provider for history when Alpha Vantage is unavailable/rate-limited.
-      try {
-        const finnhubDaily = await cacheManager.getOrFetch<TimeSeriesData>(
-          'price_cache',
-          `${upperSymbol}:finnhub:daily`,
-          ttl,
-          () => getDailyCandlesTimeSeries(upperSymbol),
-          upperSymbol
-        );
-        const filteredPoints = filterDataByPeriod(finnhubDaily.dataPoints, period);
-        history = { ...finnhubDaily, dataPoints: filteredPoints };
-        stale = true;
-      } catch (fallbackError) {
-        const isExpectedProviderDenial =
-          fallbackError instanceof Error &&
-          (fallbackError.message.includes('Finnhub API error: 401') ||
-            fallbackError.message.includes('Finnhub API error: 403') ||
-            fallbackError.message.includes('Finnhub API error: 429'));
-        if (!(fallbackError instanceof RateLimitError) && !isExpectedProviderDenial) {
-          console.error('History fallback fetch failed:', fallbackError);
+      const historyFallbacks: Array<{ key: string; daily: () => Promise<TimeSeriesData>; weekly: () => Promise<TimeSeriesData> }> = [
+        { key: 'finnhub', daily: () => getDailyCandlesTimeSeries(upperSymbol), weekly: () => getDailyCandlesTimeSeries(upperSymbol) },
+        { key: 'twelve_data', daily: () => getTwelveDataDaily(upperSymbol), weekly: () => getTwelveDataWeekly(upperSymbol) },
+        { key: 'stockdata', daily: () => getStockDataDaily(upperSymbol), weekly: () => getStockDataWeekly(upperSymbol) },
+      ];
+      for (const fb of historyFallbacks) {
+        try {
+          const fetcher = useWeekly ? fb.weekly : fb.daily;
+          const fallbackData = await cacheManager.getOrFetch<TimeSeriesData>(
+            'price_cache',
+            `${upperSymbol}:${fb.key}:${useWeekly ? 'weekly' : 'daily'}`,
+            ttl,
+            fetcher,
+            upperSymbol
+          );
+          const filteredPoints = filterDataByPeriod(fallbackData.dataPoints, period);
+          history = { ...fallbackData, dataPoints: filteredPoints };
+          stale = true;
+          break;
+        } catch (fallbackError) {
+          const isExpectedProviderDenial =
+            fallbackError instanceof Error &&
+            (fallbackError.message.includes('API error: 401') ||
+              fallbackError.message.includes('API error: 403') ||
+              fallbackError.message.includes('API error: 429') ||
+              fallbackError.message.includes('not configured'));
+          if (!(fallbackError instanceof RateLimitError) && !isExpectedProviderDenial) {
+            console.error(`History fallback (${fb.key}) fetch failed:`, fallbackError);
+          }
         }
       }
     }
