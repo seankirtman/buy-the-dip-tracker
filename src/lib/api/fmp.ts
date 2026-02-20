@@ -1,6 +1,6 @@
 import { checkRateLimit, recordApiCall } from './api-queue';
 
-const BASE_URL = 'https://financialmodelingprep.com';
+const BASE_URL = 'https://financialmodelingprep.com/stable';
 
 function getApiKey(): string | null {
   const key = process.env.FMP_API_KEY;
@@ -8,47 +8,57 @@ function getApiKey(): string | null {
   return key;
 }
 
-export interface FmpPriceTarget {
+export interface FmpPriceTargetSummary {
   symbol: string;
-  publishedDate: string;
-  analystName: string;
-  analystCompany: string;
-  priceTarget: number;
-  priceWhenPosted: number;
+  lastMonthCount: number;
+  lastMonthAvgPriceTarget: number;
+  lastQuarterCount: number;
+  lastQuarterAvgPriceTarget: number;
+  lastYearCount: number;
+  lastYearAvgPriceTarget: number;
+  publishers: string[];
 }
 
 /**
- * Fetch the most recent individual analyst price targets for a symbol.
- * Returns null if FMP_API_KEY is not configured.
+ * Fetch the price target summary for a symbol (aggregate data with publisher names).
+ * Returns null if FMP_API_KEY is not configured or data is unavailable.
  */
-export async function getLatestPriceTargets(
-  symbol: string,
-  limit = 5
-): Promise<FmpPriceTarget[] | null> {
+export async function getPriceTargetSummary(
+  symbol: string
+): Promise<FmpPriceTargetSummary | null> {
   const apiKey = getApiKey();
   if (!apiKey) return null;
 
   checkRateLimit('fmp');
 
-  const url = `${BASE_URL}/api/v4/price-target?symbol=${encodeURIComponent(symbol)}&apikey=${apiKey}`;
+  const url = `${BASE_URL}/price-target-summary?symbol=${encodeURIComponent(symbol)}&apikey=${apiKey}`;
 
   const res = await fetch(url);
-  if (!res.ok) {
-    if (res.status === 401 || res.status === 403) return null;
-    throw new Error(`FMP API error: ${res.status} ${res.statusText}`);
-  }
+  if (!res.ok) return null;
 
   const json = await res.json();
-  recordApiCall('fmp', 'price-target', symbol);
+  recordApiCall('fmp', 'price-target-summary', symbol);
 
   if (!Array.isArray(json) || json.length === 0) return null;
 
-  return json.slice(0, limit).map((entry: Record<string, unknown>) => ({
+  const entry = json[0] as Record<string, unknown>;
+
+  let publishers: string[] = [];
+  const raw = entry.publishers;
+  if (typeof raw === 'string') {
+    try { publishers = JSON.parse(raw); } catch { /* ignore */ }
+  } else if (Array.isArray(raw)) {
+    publishers = raw.map(String);
+  }
+
+  return {
     symbol: String(entry.symbol ?? symbol),
-    publishedDate: String(entry.publishedDate ?? ''),
-    analystName: String(entry.analystName ?? ''),
-    analystCompany: String(entry.analystCompany ?? entry.newsPublisher ?? ''),
-    priceTarget: Number(entry.adjPriceTarget ?? entry.priceTarget ?? 0),
-    priceWhenPosted: Number(entry.priceWhenPosted ?? 0),
-  }));
+    lastMonthCount: Number(entry.lastMonthCount ?? 0),
+    lastMonthAvgPriceTarget: Number(entry.lastMonthAvgPriceTarget ?? 0),
+    lastQuarterCount: Number(entry.lastQuarterCount ?? 0),
+    lastQuarterAvgPriceTarget: Number(entry.lastQuarterAvgPriceTarget ?? 0),
+    lastYearCount: Number(entry.lastYearCount ?? 0),
+    lastYearAvgPriceTarget: Number(entry.lastYearAvgPriceTarget ?? 0),
+    publishers,
+  };
 }

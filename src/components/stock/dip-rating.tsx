@@ -8,11 +8,12 @@ interface DipRatingProps {
   price: number;
 }
 
-interface LatestAnalyst {
-  name: string;
-  company: string;
-  date: string;
-  priceTarget: number;
+interface FmpSummary {
+  lastMonthCount: number;
+  lastMonthAvgTarget: number;
+  lastQuarterCount: number;
+  lastQuarterAvgTarget: number;
+  publishers: string[];
 }
 
 interface DipRatingData {
@@ -21,7 +22,7 @@ interface DipRatingData {
   targetPrice: number | null;
   upsidePercent: number | null;
   totalAnalysts: number;
-  latestAnalyst: LatestAnalyst | null;
+  fmpSummary: FmpSummary | null;
 }
 
 const GRADE_COLORS: Record<string, string> = {
@@ -38,12 +39,6 @@ const GRADE_COLORS: Record<string, string> = {
   'D':  'text-orange-500',
   'F':  'text-red-500',
 };
-
-function formatAnalystDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return dateStr;
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
 
 function gradeDescription(grade: string): string {
   if (grade.startsWith('A')) return 'Strong buy-the-dip signal';
@@ -126,20 +121,27 @@ export function DipRating({ symbol, price }: DipRatingProps) {
           <span>{data.totalAnalysts} analysts</span>
         )}
       </div>
-      {data.latestAnalyst && (
-        <div className="mt-2 text-xs text-text-muted">
-          <span className="text-text-secondary font-medium">
-            {data.latestAnalyst.name}
-          </span>
-          {data.latestAnalyst.company && (
-            <span> ({data.latestAnalyst.company})</span>
-          )}
-          {' — '}
-          {formatCurrency(data.latestAnalyst.priceTarget)} target
-          {data.latestAnalyst.date && (
-            <span className="text-text-muted/70">
-              {' · '}{formatAnalystDate(data.latestAnalyst.date)}
+      {data.fmpSummary && data.fmpSummary.lastMonthCount > 0 && (
+        <div className="mt-2 space-y-1 text-xs text-text-muted">
+          <div>
+            <span className="text-text-secondary font-medium">
+              {data.fmpSummary.lastMonthCount} target{data.fmpSummary.lastMonthCount !== 1 ? 's' : ''} this month
             </span>
+            {' · avg '}
+            {formatCurrency(data.fmpSummary.lastMonthAvgTarget)}
+            {data.fmpSummary.lastQuarterCount > data.fmpSummary.lastMonthCount && (
+              <span className="text-text-muted/70">
+                {' · '}{data.fmpSummary.lastQuarterCount} this quarter
+              </span>
+            )}
+          </div>
+          {data.fmpSummary.publishers.length > 0 && (
+            <div className="text-text-muted/70">
+              via {data.fmpSummary.publishers.slice(0, 3).join(', ')}
+              {data.fmpSummary.publishers.length > 3 && (
+                <span> +{data.fmpSummary.publishers.length - 3} more</span>
+              )}
+            </div>
           )}
         </div>
       )}
