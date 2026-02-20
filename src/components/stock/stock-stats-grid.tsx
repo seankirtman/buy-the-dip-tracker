@@ -64,7 +64,7 @@ export function StockStatsGrid({ quote, history, profile }: StockStatsGridProps)
           Quote data is required to display statistics.
         </p>
       ) : (
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 md:grid-cols-[1fr_1fr_2fr] items-stretch">
         <StatSection title="Trading">
           <StatRow label="Open" value={formatCurrency(quote.open ?? 0)} />
           <StatRow label="Previous Close" value={formatCurrency(quote.previousClose ?? 0)} />
@@ -74,10 +74,14 @@ export function StockStatsGrid({ quote, history, profile }: StockStatsGridProps)
           {avgVolume != null && avgVolume > 0 && (
             <StatRow label="Avg. Volume" value={formatVolume(Math.round(avgVolume))} />
           )}
+          {marketCap != null && marketCap > 0 && (
+            <StatRow label="Market Cap" value={formatLargeNumber(marketCap)} />
+          )}
+          <StatRow label="P/E Ratio" value={peRatio != null ? peRatio.toFixed(2) : '—'} />
         </StatSection>
 
         {(week52High != null || week52Low != null) && (
-          <StatSection title="52-Week Range">
+          <StatSection title="52-Week Summary">
             {week52High != null && (
               <StatRow label="52W High" value={formatCurrency(week52High)} />
             )}
@@ -104,36 +108,25 @@ export function StockStatsGrid({ quote, history, profile }: StockStatsGridProps)
                     <span>{formatCurrency(week52High)}</span>
                   </div>
                 </div>
-                <RangeSummary
-                  symbol={quote.symbol ?? quote.name}
-                  pctOfRange={((quote.price - week52Low) / (week52High - week52Low)) * 100}
-                  week52High={week52High}
-                  week52Low={week52Low}
-                  price={quote.price}
-                  companyName={profile?.name}
-                  periodChangePercent={periodChangePercent}
-                />
               </>
             )}
           </StatSection>
         )}
 
-        {(marketCap != null || peRatio != null) && (
-          <StatSection title="Valuation">
-            {marketCap != null && marketCap > 0 && (
-              <StatRow label="Market Cap" value={formatLargeNumber(marketCap)} />
-            )}
-            {peRatio != null && (
-              <StatRow label="P/E Ratio" value={peRatio.toFixed(2)} />
-            )}
+        {(week52High != null && week52Low != null && week52High > week52Low && (
+          <StatSection title="Summary">
+            <RangeSummary
+                symbol={quote.symbol ?? quote.name}
+                pctOfRange={((quote.price - week52Low) / (week52High - week52Low)) * 100}
+                week52High={week52High}
+                week52Low={week52Low}
+                price={quote.price}
+                companyName={profile?.name}
+                industry={profile?.industry}
+                periodChangePercent={periodChangePercent}
+            />
           </StatSection>
-        )}
-
-        {profile?.industry && (
-          <StatSection title="Company">
-            <StatRow label="Industry" value={profile.industry} />
-          </StatSection>
-        )}
+        ))}
       </div>
       )}
     </section>

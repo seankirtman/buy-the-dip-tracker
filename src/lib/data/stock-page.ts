@@ -1,5 +1,10 @@
 import { cacheManager } from '@/lib/db/cache';
-import { getQuote, getCompanyProfile, getDailyCandlesTimeSeries } from '@/lib/api/finnhub';
+import {
+  getQuote,
+  getCompanyProfile,
+  getCompanyBasicFinancials,
+  getDailyCandlesTimeSeries,
+} from '@/lib/api/finnhub';
 import type { CompanyProfile } from '@/lib/api/finnhub';
 import { getDailyTimeSeries, getWeeklyTimeSeries } from '@/lib/api/alpha-vantage';
 import { RateLimitError } from '@/lib/api/api-queue';
@@ -53,6 +58,27 @@ export async function getStockPageData(
     );
   } catch {
     // Optional - don't fail page if profile fails
+  }
+
+  // Fetch fundamentals (P/E) - non-blocking, cache 24h
+  let fundamentals: { peRatio: number | null } | null = null;
+  try {
+    fundamentals = await cacheManager.getOrFetch<{ peRatio: number | null } | null>(
+      'fundamentals_cache',
+      upperSymbol,
+      86400, // 24h TTL
+      async () => {
+        const f = await getCompanyBasicFinancials(upperSymbol);
+        return f ? { peRatio: f.peRatio } : null;
+      }
+    );
+  } catch {
+    // Optional - don't fail page if fundamentals fail
+  }
+
+  // Merge P/E into quote for UI
+  if (quote && fundamentals?.peRatio != null) {
+    quote = { ...quote, peRatio: fundamentals.peRatio };
   }
 
   // Fetch history (use weekly for 6M+/YTD/1Y - daily 'full' is premium-only)

@@ -9,6 +9,7 @@ interface RangeSummaryProps {
   week52Low: number;
   price: number;
   companyName?: string;
+  industry?: string;
   periodChangePercent?: number;
 }
 
@@ -19,6 +20,7 @@ export function RangeSummary({
   week52Low,
   price,
   companyName,
+  industry,
   periodChangePercent,
 }: RangeSummaryProps) {
   const [summary, setSummary] = useState<string | null>(null);
@@ -37,6 +39,7 @@ export function RangeSummary({
           price: price.toFixed(2),
         });
         if (companyName) params.set('companyName', companyName);
+        if (industry) params.set('industry', industry);
         if (periodChangePercent != null && !Number.isNaN(periodChangePercent)) {
           params.set('periodChangePercent', periodChangePercent.toFixed(1));
         }
@@ -64,7 +67,7 @@ export function RangeSummary({
 
     fetchSummary();
     return () => { cancelled = true; };
-  }, [symbol, pctOfRange, week52High, week52Low, price, companyName, periodChangePercent]);
+  }, [symbol, pctOfRange, week52High, week52Low, price, companyName, industry, periodChangePercent]);
 
   if (loading) {
     return (

@@ -56,6 +56,7 @@ export function scoreAndRankEvents(
       id,
       symbol,
       date: anomaly.date,
+      timeframe: anomaly.timeframe,
       type: eventType,
       title,
       description,

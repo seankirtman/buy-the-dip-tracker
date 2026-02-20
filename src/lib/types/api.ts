@@ -9,6 +9,18 @@ export const avDailyPointSchema = z.object({
   '5. volume': z.string(),
 });
 
+// Alpha Vantage TIME_SERIES_DAILY_ADJUSTED (split/dividend adjusted)
+export const avDailyAdjustedPointSchema = z.object({
+  '1. open': z.string(),
+  '2. high': z.string(),
+  '3. low': z.string(),
+  '4. close': z.string(),
+  '5. adjusted close': z.string(),
+  '6. volume': z.string(),
+  '7. dividend amount': z.string().optional(),
+  '8. split coefficient': z.string().optional(),
+});
+
 export const avDailyMetadataSchema = z.object({
   '1. Information': z.string(),
   '2. Symbol': z.string(),
@@ -20,6 +32,11 @@ export const avDailyMetadataSchema = z.object({
 export const avDailyResponseSchema = z.object({
   'Meta Data': avDailyMetadataSchema,
   'Time Series (Daily)': z.record(z.string(), avDailyPointSchema),
+});
+
+export const avDailyAdjustedResponseSchema = z.object({
+  'Meta Data': avDailyMetadataSchema,
+  'Time Series (Daily)': z.record(z.string(), avDailyAdjustedPointSchema),
 });
 
 // Alpha Vantage TIME_SERIES_INTRADAY response (e.g., 60min interval)
@@ -48,6 +65,12 @@ export const avWeeklyMetadataSchema = z.object({
 export const avWeeklyResponseSchema = z.object({
   'Meta Data': avWeeklyMetadataSchema,
   'Weekly Time Series': z.record(z.string(), avDailyPointSchema),
+});
+
+// Alpha Vantage TIME_SERIES_WEEKLY_ADJUSTED (split/dividend adjusted)
+export const avWeeklyAdjustedResponseSchema = z.object({
+  'Meta Data': avWeeklyMetadataSchema,
+  'Weekly Adjusted Time Series': z.record(z.string(), avDailyAdjustedPointSchema),
 });
 
 // Alpha Vantage GLOBAL_QUOTE response
@@ -141,6 +164,17 @@ export const finnhubCompanyProfileSchema = z.object({
   weburl: z.string().optional(),
   finnhubIndustry: z.string().optional(),
 });
+
+// Finnhub stock/metric (company basic financials) - P/E and other metrics
+export const finnhubBasicFinancialsSchema = z.object({
+  metric: z
+    .object({
+      peTTM: z.union([z.number(), z.null()]).optional(),
+      peTTMPositive: z.union([z.number(), z.null()]).optional(),
+    })
+    .passthrough()
+    .optional(),
+}).passthrough();
 
 export type AVDailyResponse = z.infer<typeof avDailyResponseSchema>;
 export type AVGlobalQuoteResponse = z.infer<typeof avGlobalQuoteResponseSchema>;

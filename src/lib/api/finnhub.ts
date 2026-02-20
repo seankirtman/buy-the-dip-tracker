@@ -1,4 +1,5 @@
 import {
+  finnhubBasicFinancialsSchema,
   finnhubCandleSchema,
   finnhubCompanyProfileSchema,
   finnhubNewsArraySchema,
@@ -90,6 +91,37 @@ export async function getCompanyProfile(symbol: string): Promise<CompanyProfile 
     name: parsed.data.name,
     industry: parsed.data.finnhubIndustry,
   };
+}
+
+export interface CompanyBasicFinancials {
+  peRatio: number | null;
+}
+
+export async function getCompanyBasicFinancials(
+  symbol: string
+): Promise<CompanyBasicFinancials | null> {
+  checkRateLimit('finnhub');
+
+  const apiKey = getApiKey();
+  const url = `${BASE_URL}/stock/metric?symbol=${encodeURIComponent(symbol)}&metric=all&token=${apiKey}`;
+
+  const res = await fetch(url);
+  if (!res.ok) return null;
+
+  const json = await res.json();
+  recordApiCall('finnhub', 'stock/metric', symbol);
+
+  const parsed = finnhubBasicFinancialsSchema.safeParse(json);
+  if (!parsed.success) return null;
+
+  const metric = parsed.data?.metric;
+  if (!metric) return null;
+
+  // peTTM = P/E trailing twelve months; peTTMPositive used when earnings are positive
+  const pe = metric.peTTM ?? metric.peTTMPositive ?? null;
+  const peRatio = pe != null && pe > 0 ? pe : null;
+
+  return { peRatio };
 }
 
 export async function searchSymbol(query: string): Promise<SearchResult[]> {

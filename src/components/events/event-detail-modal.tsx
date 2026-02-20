@@ -92,7 +92,7 @@ export function EventDetailModal({ event, onClose }: EventDetailModalProps) {
               value={formatCurrency(event.priceNow)}
             />
             <Stat
-              label="Day Move"
+              label={event.timeframe === 'weekly' ? 'Week Move' : 'Day Move'}
               value={formatPercent(event.dailyReturn)}
               color={event.dailyReturn >= 0 ? 'positive' : 'negative'}
             />
@@ -105,12 +105,12 @@ export function EventDetailModal({ event, onClose }: EventDetailModalProps) {
 
           <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
             <Stat
-              label="S&P 500 (day)"
+              label={event.timeframe === 'weekly' ? 'S&P 500 (week)' : 'S&P 500 (day)'}
               value={formatPercent(sp500Return)}
               color={sp500Return >= 0 ? 'positive' : 'negative'}
             />
             <Stat
-              label="vs S&P 500 (day)"
+              label={event.timeframe === 'weekly' ? 'vs S&P 500 (week)' : 'vs S&P 500 (day)'}
               value={formatPercentagePoints(event.relativeReturn)}
               color={event.relativeReturn >= 0 ? 'positive' : 'negative'}
             />

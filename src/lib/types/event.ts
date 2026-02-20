@@ -2,6 +2,7 @@ export interface StockEvent {
   id: string;
   symbol: string;
   date: string; // YYYY-MM-DD
+  timeframe?: 'daily' | 'weekly'; // daily = single-day move, weekly = week-over-week move
   type: EventType;
   title: string;
   description: string;

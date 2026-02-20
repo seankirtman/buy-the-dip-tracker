@@ -1,7 +1,7 @@
 import {
-  avDailyResponseSchema,
+  avDailyAdjustedResponseSchema,
   avIntradayResponseSchema,
-  avWeeklyResponseSchema,
+  avWeeklyAdjustedResponseSchema,
   avGlobalQuoteResponseSchema,
   avSearchResponseSchema,
 } from '@/lib/types/api';
@@ -68,26 +68,31 @@ export async function getDailyTimeSeries(
   checkRateLimit('alpha_vantage');
 
   const raw = await fetchAV({
-    function: 'TIME_SERIES_DAILY',
+    function: 'TIME_SERIES_DAILY_ADJUSTED',
     symbol,
     outputsize: outputSize,
   });
 
-  recordApiCall('alpha_vantage', 'TIME_SERIES_DAILY', symbol);
+  recordApiCall('alpha_vantage', 'TIME_SERIES_DAILY_ADJUSTED', symbol);
 
-  const parsed = avDailyResponseSchema.parse(raw);
+  const parsed = avDailyAdjustedResponseSchema.parse(raw);
   const meta = parsed['Meta Data'];
   const timeSeries = parsed['Time Series (Daily)'];
 
   const dataPoints: OHLCDataPoint[] = Object.entries(timeSeries)
-    .map(([date, values]) => ({
-      time: date,
-      open: parseFloat(values['1. open']),
-      high: parseFloat(values['2. high']),
-      low: parseFloat(values['3. low']),
-      close: parseFloat(values['4. close']),
-      volume: parseInt(values['5. volume'], 10),
-    }))
+    .map(([date, values]) => {
+      const close = parseFloat(values['4. close']);
+      const adjClose = parseFloat(values['5. adjusted close']);
+      const factor = close > 0 ? adjClose / close : 1;
+      return {
+        time: date,
+        open: parseFloat(values['1. open']) * factor,
+        high: parseFloat(values['2. high']) * factor,
+        low: parseFloat(values['3. low']) * factor,
+        close: adjClose,
+        volume: parseInt(values['6. volume'], 10),
+      };
+    })
     .sort((a, b) => a.time.localeCompare(b.time));
 
   return {
@@ -146,30 +151,35 @@ export async function getIntradayTimeSeries(symbol: string): Promise<TimeSeriesD
   };
 }
 
-/** Weekly data - full history on free tier (no outputsize restriction) */
+/** Weekly data - full history, split/dividend adjusted */
 export async function getWeeklyTimeSeries(symbol: string): Promise<TimeSeriesData> {
   checkRateLimit('alpha_vantage');
 
   const raw = await fetchAV({
-    function: 'TIME_SERIES_WEEKLY',
+    function: 'TIME_SERIES_WEEKLY_ADJUSTED',
     symbol,
   });
 
-  recordApiCall('alpha_vantage', 'TIME_SERIES_WEEKLY', symbol);
+  recordApiCall('alpha_vantage', 'TIME_SERIES_WEEKLY_ADJUSTED', symbol);
 
-  const parsed = avWeeklyResponseSchema.parse(raw);
+  const parsed = avWeeklyAdjustedResponseSchema.parse(raw);
   const meta = parsed['Meta Data'];
-  const timeSeries = parsed['Weekly Time Series'];
+  const timeSeries = parsed['Weekly Adjusted Time Series'];
 
   const dataPoints: OHLCDataPoint[] = Object.entries(timeSeries)
-    .map(([date, values]) => ({
-      time: date,
-      open: parseFloat(values['1. open']),
-      high: parseFloat(values['2. high']),
-      low: parseFloat(values['3. low']),
-      close: parseFloat(values['4. close']),
-      volume: parseInt(values['5. volume'], 10),
-    }))
+    .map(([date, values]) => {
+      const close = parseFloat(values['4. close']);
+      const adjClose = parseFloat(values['5. adjusted close']);
+      const factor = close > 0 ? adjClose / close : 1;
+      return {
+        time: date,
+        open: parseFloat(values['1. open']) * factor,
+        high: parseFloat(values['2. high']) * factor,
+        low: parseFloat(values['3. low']) * factor,
+        close: adjClose,
+        volume: parseInt(values['6. volume'], 10),
+      };
+    })
     .sort((a, b) => a.time.localeCompare(b.time));
 
   return {

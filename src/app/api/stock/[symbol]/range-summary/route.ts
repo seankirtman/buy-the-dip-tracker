@@ -1,4 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { subDays, format } from 'date-fns';
+import { getCompanyNews } from '@/lib/api/finnhub';
+import { cacheManager } from '@/lib/db/cache';
+import type { NewsArticle } from '@/lib/types/event';
+
+async function fetchRecentNewsSnippets(symbol: string): Promise<string[]> {
+  const to = new Date();
+  const from = subDays(to, 14);
+  const fromStr = format(from, 'yyyy-MM-dd');
+  const toStr = format(to, 'yyyy-MM-dd');
+  const cacheKey = `news:summary:${symbol}:${fromStr}:${toStr}`;
+  try {
+    const articles = await cacheManager.getOrFetch<NewsArticle[]>(
+      'news_cache',
+      cacheKey,
+      3600, // 1 hour TTL
+      () => getCompanyNews(symbol, fromStr, toStr),
+      symbol
+    );
+    return articles.slice(0, 7).map((a) => {
+      const summarySnippet =
+        a.summary && a.summary.trim()
+          ? a.summary.slice(0, 120).trim() + (a.summary.length > 120 ? '…' : '')
+          : '';
+      return summarySnippet ? `${a.headline} — ${summarySnippet}` : a.headline;
+    });
+  } catch {
+    return [];
+  }
+}
 
 function getRangeTier(pct: number): string {
   if (pct <= 25) return '1-25';
@@ -34,6 +64,7 @@ export async function GET(
   const week52Low = request.nextUrl.searchParams.get('week52Low');
   const price = request.nextUrl.searchParams.get('price');
   const companyName = request.nextUrl.searchParams.get('companyName') ?? upperSymbol;
+  const industry = request.nextUrl.searchParams.get('industry') ?? '';
   const periodChangePercent = request.nextUrl.searchParams.get('periodChangePercent');
 
   const pct = pctOfRange ? parseFloat(pctOfRange) : NaN;
@@ -58,6 +89,9 @@ export async function GET(
   const tier = getRangeTier(pct);
   const guidance = getTierGuidance(tier);
 
+  // Fetch recent news so the summary can reference actual catalysts
+  const newsSnippets = await fetchRecentNewsSnippets(upperSymbol);
+
   const contextParts: string[] = [
     `${companyName} (${upperSymbol}) is trading at ${pct.toFixed(0)}% of its 52-week range.`,
     `Current price: $${price ?? 'N/A'}.`,
@@ -74,17 +108,27 @@ export async function GET(
     }
   }
 
-  const systemPrompt = `You are a sharp, neutral equity analyst writing for retail investors.
-Write one paragraph (3-6 sentences) explaining the narrative behind the stock's current position in its 52-week range.
-Do NOT only describe price movement. Identify likely drivers behind the move (e.g., earnings revisions, guidance, margins, demand trends, product cycle, regulation, macro/rates, sector rotation, valuation multiple changes, sentiment).
-Focus on the story causing the stock to be where it is now, not just the fact that it moved.
-Use provided context as evidence, infer plausible causes, and clearly separate what is signal vs uncertainty.
-Be balanced: include one upside continuation trigger and one downside risk from here.
-No direct buy/sell advice, no price targets, and no certainty language.
-If concrete drivers are missing, provide the 2-3 most plausible hypotheses and label them as hypotheses.`;
+  const isSoftwareSaaS =
+    industry &&
+    /software|saas|technology|application|cloud|enterprise/i.test(industry);
+
+  const systemPrompt = `You are a clear, neutral stock storyteller writing for everyday investors.
+Write one short paragraph (3-6 sentences) that explains the story behind where this stock is in its 52-week range.
+Use plain language and avoid heavy financial jargon.
+Focus on why the stock is here now (what likely happened), not just that the price moved.
+IMPORTANT: When recent headlines are provided, prioritize and weave in specific catalysts from them (e.g., earnings, stock splits, deals, management changes). Do not give a generic summary if headlines clearly explain the move—reference the actual news.
+Be balanced: include one reason it could improve and one reason it could fall further.
+Do not give direct buy/sell advice, price targets, or certainty language.
+If key facts are missing, state 2-3 likely explanations and label them as possibilities.
+${isSoftwareSaaS ? "When relevant for software/SaaS companies, consider macro themes such as AI's impact on the sector, shifts in investor sentiment toward enterprise software, and how the competitive landscape is evolving." : ''}`;
+  const newsBlock =
+    newsSnippets.length > 0
+      ? `\nRecent news (prioritize these as the main catalysts—reference specific items like stock splits, deals, earnings):\n${newsSnippets.map((s) => `• ${s}`).join('\n')}\n`
+      : '';
+
   const userPrompt = `Stock context:
 ${contextParts.join(' ')}
-
+${newsBlock}
 Range tier:
 ${tier}% (${tier === '1-25' ? 'near 52-week low' : tier === '75-99' ? 'near 52-week high' : 'mid-range'})
 
@@ -92,8 +136,8 @@ Tier focus:
 ${guidance}
 
 Task:
-Write one concise paragraph that explains the story driving the stock's current range position.
-Go beyond price action: explain what is likely causing the move, why investors are positioning this way now, and what specific developments could move the stock higher or lower next.`;
+Write one concise paragraph in simple, story-style language.
+Explain what likely put the stock in this spot, why people currently feel this way about it, and what could push it up or down next.`;
 
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {

@@ -12,7 +12,7 @@ import type { PriceAnomaly } from '@/lib/events/detector';
 import { subYears, subDays, format } from 'date-fns';
 import crypto from 'crypto';
 
-const EVENTS_PIPELINE_VERSION = 'v2-prefer-top-headline';
+const EVENTS_PIPELINE_VERSION = 'v3-adjusted-prices';
 
 export async function GET(
   _request: NextRequest,

@@ -33,9 +33,12 @@ const EVENT_KEYWORDS: Record<EventType, string[]> = {
   management: [
     'CEO', 'CFO', 'COO', 'resign', 'appoint', 'hire', 'fired', 'board',
     'executive', 'leadership', 'management',
+    'stock split', 'split', 'spin-off', 'spin off', 'corporate action',
   ],
   sector_move: [
     'sector', 'industry', 'peers', 'competitor', 'market share',
+    'SaaS', 'software', 'cloud', 'AI', 'artificial intelligence',
+    'sentiment', 'digital transformation', 'enterprise software',
   ],
   unknown: [],
 };
@@ -193,16 +196,22 @@ function generateDescription(
   const direction = anomaly.relativeReturn >= 0 ? 'gained' : 'lost';
   const pctMove = Math.abs(anomaly.stockReturn * 100).toFixed(1);
   const relMove = Math.abs(anomaly.relativeReturn * 100).toFixed(1);
+  const isWeekly = anomaly.timeframe === 'weekly';
+  const outUnder = anomaly.relativeReturn >= 0 ? 'outperforming' : 'underperforming';
 
-  let desc = `${symbol} ${direction} ${pctMove}% on ${anomaly.date}`;
-  desc += `, outperforming the S&P 500 by ${relMove} percentage points.`;
+  const timePhrase = isWeekly
+    ? `over the week ending ${anomaly.date}`
+    : `on ${anomaly.date}`;
+  let desc = `${symbol} ${direction} ${pctMove}% ${timePhrase}`;
+  desc += `, ${outUnder} the S&P 500 by ${relMove} percentage points.`;
 
   if (anomaly.volumeSpike > 2) {
     desc += ` Trading volume was ${anomaly.volumeSpike.toFixed(1)}x the 20-day average.`;
   }
 
+  const dateContext = isWeekly ? 'this week' : 'this date';
   if (topArticles.length > 0) {
-    desc += ` Key headlines around this date: "${truncate(topArticles[0].headline, 100)}"`;
+    desc += ` Key headlines around ${dateContext}: "${truncate(topArticles[0].headline, 100)}"`;
     if (topArticles.length > 1) {
       desc += ` and "${truncate(topArticles[1].headline, 80)}"`;
     }

@@ -62,6 +62,14 @@ function initSchema(db: Database.Database): void {
       ttl_seconds INTEGER NOT NULL DEFAULT 86400
     );
 
+    CREATE TABLE IF NOT EXISTS fundamentals_cache (
+      key TEXT PRIMARY KEY,
+      symbol TEXT NOT NULL,
+      data TEXT NOT NULL,
+      fetched_at INTEGER NOT NULL,
+      ttl_seconds INTEGER NOT NULL DEFAULT 86400
+    );
+
     CREATE TABLE IF NOT EXISTS events_cache (
       symbol TEXT PRIMARY KEY,
       data TEXT NOT NULL,
