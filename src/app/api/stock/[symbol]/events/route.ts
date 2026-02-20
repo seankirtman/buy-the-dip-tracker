@@ -7,14 +7,6 @@ import {
   getCompanyNews,
   getQuote,
 } from '@/lib/api/yahoo-finance';
-import {
-  getDailyTimeSeries as getTwelveDataDaily,
-  getWeeklyTimeSeries as getTwelveDataWeekly,
-} from '@/lib/api/twelve-data';
-import {
-  getDailyTimeSeries as getStockDataDaily,
-  getWeeklyTimeSeries as getStockDataWeekly,
-} from '@/lib/api/stockdata';
 import { detectAnomalies } from '@/lib/events/detector';
 import { correlateNews } from '@/lib/events/correlator';
 import { scoreAndRankEvents } from '@/lib/events/scorer';
@@ -39,67 +31,48 @@ export async function GET(
   try {
     const getSeries = async (
       key: string,
-      fetchers: Array<() => Promise<TimeSeriesData>>,
+      fetcher: () => Promise<TimeSeriesData>,
       symbolForCache: string
     ): Promise<TimeSeriesData> => {
-      for (const fetcher of fetchers) {
-        try {
-          return await cacheManager.getOrFetch<TimeSeriesData>(
-            'price_cache',
-            key,
-            604800, // 7 day TTL
-            fetcher,
-            symbolForCache
-          );
-        } catch {
-          const cached = cacheManager.getCached<TimeSeriesData>('price_cache', key);
-          if (cached) {
-            stale = true;
-            return cached;
-          }
-          // Try next fetcher
+      try {
+        return await cacheManager.getOrFetch<TimeSeriesData>(
+          'price_cache',
+          key,
+          604800, // 7 day TTL
+          fetcher,
+          symbolForCache
+        );
+      } catch (error) {
+        const cached = cacheManager.getCached<TimeSeriesData>('price_cache', key);
+        if (cached) {
+          stale = true;
+          return cached;
         }
+        throw error;
       }
-      throw new Error('All history providers failed');
     };
 
     // Step 1: Fetch SPY first (shared across all symbols) so it’s cached for subsequent requests
     const spyDaily = await getSeries(
       'SPY:daily:compact',
-      [
-        () => getDailyTimeSeries('SPY'),
-        () => getTwelveDataDaily('SPY'),
-        () => getStockDataDaily('SPY'),
-      ],
+      () => getDailyTimeSeries('SPY'),
       'SPY'
     );
     const spyWeekly = await getSeries(
       'SPY:weekly',
-      [
-        () => getWeeklyTimeSeries('SPY'),
-        () => getTwelveDataWeekly('SPY'),
-        () => getStockDataWeekly('SPY'),
-      ],
+      () => getWeeklyTimeSeries('SPY'),
       'SPY'
     );
 
     // Step 2: Get stock price data for daily and weekly abnormal-move detection
     const stockDaily = await getSeries(
       `${upperSymbol}:daily:compact`,
-      [
-        () => getDailyTimeSeries(upperSymbol),
-        () => getTwelveDataDaily(upperSymbol),
-        () => getStockDataDaily(upperSymbol),
-      ],
+      () => getDailyTimeSeries(upperSymbol),
       upperSymbol
     );
     const stockWeekly = await getSeries(
       `${upperSymbol}:weekly`,
-      [
-        () => getWeeklyTimeSeries(upperSymbol),
-        () => getTwelveDataWeekly(upperSymbol),
-        () => getStockDataWeekly(upperSymbol),
-      ],
+      () => getWeeklyTimeSeries(upperSymbol),
       upperSymbol
     );
 

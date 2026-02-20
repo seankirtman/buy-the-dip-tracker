@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cacheManager } from '@/lib/db/cache';
 import { searchSymbol } from '@/lib/api/yahoo-finance';
-import { searchSymbol as searchTwelveData } from '@/lib/api/twelve-data';
 import { RateLimitError } from '@/lib/api/api-queue';
 
 // When results are empty and query looks like a ticker, add it as a fallback option.
@@ -21,21 +20,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Query parameter "q" is required' }, { status: 400 });
   }
 
-  const searchWithFallbacks = async () => {
-    try {
-      const results = await searchSymbol(query);
-      if (results.length > 0) return results;
-    } catch {
-      // Try Twelve Data below
-    }
-    return await searchTwelveData(query);
-  };
   try {
     const data = await cacheManager.getOrFetch(
       'news_cache', // reuse news_cache table for search results
       `search:${query.toUpperCase()}`,
       86400, // Cache search results for 24 hours
-      searchWithFallbacks,
+      () => searchSymbol(query),
       query
     );
 

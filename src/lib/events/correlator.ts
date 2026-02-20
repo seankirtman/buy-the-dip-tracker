@@ -1,7 +1,6 @@
 import type { NewsArticle, EventType } from '@/lib/types/event';
 import type { PriceAnomaly } from './detector';
 import { getCompanyNews } from '@/lib/api/yahoo-finance';
-import { getCompanyNews as getStockDataNews } from '@/lib/api/stockdata';
 import { cacheManager } from '@/lib/db/cache';
 import { format, subDays, addDays } from 'date-fns';
 
@@ -73,19 +72,12 @@ export async function correlateNews(
     const cacheKey = `${symbol}:${sameDay}:${from}:${to}`;
 
     let articles: NewsArticle[];
-    const getNewsWithFallbacks = async () => {
-      try {
-        return await getCompanyNews(symbol, from, to);
-      } catch {
-        return await getStockDataNews(symbol, from, to);
-      }
-    };
     try {
       articles = await cacheManager.getOrFetch<NewsArticle[]>(
         'news_cache',
         cacheKey,
         7200, // 2 hour TTL
-        getNewsWithFallbacks,
+        () => getCompanyNews(symbol, from, to),
         symbol
       );
     } catch {

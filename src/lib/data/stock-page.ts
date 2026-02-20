@@ -5,8 +5,6 @@ import {
   getWeeklyTimeSeries,
 } from '@/lib/api/yahoo-finance';
 import type { CompanyProfile } from '@/lib/api/yahoo-finance';
-import { getQuote as getTwelveDataQuote, getDailyTimeSeries as getTwelveDataDaily, getWeeklyTimeSeries as getTwelveDataWeekly } from '@/lib/api/twelve-data';
-import { getQuote as getStockDataQuote, getDailyTimeSeries as getStockDataDaily, getWeeklyTimeSeries as getStockDataWeekly } from '@/lib/api/stockdata';
 import { RateLimitError } from '@/lib/api/api-queue';
 import { isMarketHours } from '@/lib/utils/date';
 import { filterDataByPeriod, getTTLForPeriod } from '@/lib/utils/date';
@@ -26,26 +24,15 @@ export async function getStockPageData(
   const upperSymbol = symbol.toUpperCase();
   let stale = false;
 
-  // Fetch quote (Yahoo → Twelve Data → StockData)
+  // Fetch quote (Yahoo Finance)
   const quoteTtl = isMarketHours() ? 300 : 3600;
-  const getQuoteWithFallbacks = async () => {
-    try {
-      return await getQuote(upperSymbol);
-    } catch {
-      try {
-        return await getTwelveDataQuote(upperSymbol);
-      } catch {
-        return await getStockDataQuote(upperSymbol);
-      }
-    }
-  };
   let quote: StockQuote | null = null;
   try {
     quote = await cacheManager.getOrFetch(
       'quote_cache',
       upperSymbol,
       quoteTtl,
-      getQuoteWithFallbacks
+      () => getQuote(upperSymbol)
     );
   } catch (error) {
     const cached = cacheManager.getCached<StockQuote>('quote_cache', upperSymbol);
@@ -87,31 +74,9 @@ export async function getStockPageData(
       const filteredPoints = filterDataByPeriod(cached.dataPoints, period);
       history = { ...cached, dataPoints: filteredPoints };
       stale = true;
-    } else {
-      const historyFallbacks: Array<{ key: string; fetcher: () => Promise<TimeSeriesData> }> = [
-        { key: 'twelve_data', fetcher: () => (useWeekly ? getTwelveDataWeekly(upperSymbol) : getTwelveDataDaily(upperSymbol)) },
-        { key: 'stockdata', fetcher: () => (useWeekly ? getStockDataWeekly(upperSymbol) : getStockDataDaily(upperSymbol)) },
-      ];
-      for (const fb of historyFallbacks) {
-        try {
-          const fallbackData = await cacheManager.getOrFetch<TimeSeriesData>(
-            'price_cache',
-            `${upperSymbol}:${fb.key}:${useWeekly ? 'weekly' : 'daily'}`,
-            ttl,
-            fb.fetcher,
-            upperSymbol
-          );
-          const filteredPoints = filterDataByPeriod(fallbackData.dataPoints, period);
-          history = { ...fallbackData, dataPoints: filteredPoints };
-          stale = true;
-          break;
-        } catch {
-          // Try next fallback
-        }
-      }
     }
 
-    if (!(error instanceof RateLimitError) && !history) {
+    if (!(error instanceof RateLimitError)) {
       console.error('History fetch failed:', error);
     }
   }
