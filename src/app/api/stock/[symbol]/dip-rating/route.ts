@@ -54,6 +54,19 @@ function computeMomentumScore(trends: RecommendationTrend[]): number {
   return Math.round(((clamped + 10) / 20) * 100);
 }
 
+/**
+ * FMP fallback: derive momentum from recent vs prior update activity.
+ * lastMonthCount / (lastQuarterCount/3) > 1 = above-average recent activity.
+ */
+function computeMomentumScoreFromFmp(fmp: FmpPriceTargetSummary): number {
+  if (fmp.lastQuarterCount <= 0) return 50;
+  const expectedPerMonth = fmp.lastQuarterCount / 3;
+  const ratio = expectedPerMonth > 0 ? fmp.lastMonthCount / expectedPerMonth : 1;
+  // ratio 0.5 -> ~40, 1.0 -> 50, 1.5 -> 60, 2.0+ -> 70
+  const clamped = Math.max(0.3, Math.min(2, ratio));
+  return Math.round(((clamped - 0.3) / 1.7) * 100);
+}
+
 async function fetchSafe<T>(
   label: string,
   fn: () => Promise<T>,
@@ -123,9 +136,17 @@ export async function GET(
       return NextResponse.json({ error: 'No analyst data available' }, { status: 404 });
     }
 
-    const upsideScore = computeUpsideScore(consensus?.targetPrice ?? null, currentPrice);
+    // Upside: prefer Alpha Vantage target, fallback to FMP 30-day avg
+    const targetPrice =
+      consensus?.targetPrice ?? fmpSummary?.lastMonthAvgPriceTarget ?? null;
+    const upsideScore = computeUpsideScore(targetPrice, currentPrice);
     const consensusScore = consensus ? computeConsensusScore(consensus) : 50;
-    const momentumScore = computeMomentumScore(trends);
+    const momentumScore =
+      trends.length >= 2
+        ? computeMomentumScore(trends)
+        : fmpSummary
+          ? computeMomentumScoreFromFmp(fmpSummary)
+          : 50;
 
     const finalScore = Math.round(
       upsideScore * 0.50 + consensusScore * 0.25 + momentumScore * 0.25
@@ -133,8 +154,8 @@ export async function GET(
     const grade = scoreToGrade(finalScore);
 
     const upsidePercent =
-      consensus?.targetPrice && currentPrice > 0
-        ? ((consensus.targetPrice - currentPrice) / currentPrice) * 100
+      targetPrice != null && currentPrice > 0
+        ? ((targetPrice - currentPrice) / currentPrice) * 100
         : null;
 
     const totalAnalysts = consensus
@@ -144,7 +165,7 @@ export async function GET(
     return NextResponse.json({
       grade,
       score: finalScore,
-      targetPrice: consensus?.targetPrice ?? null,
+      targetPrice: consensus?.targetPrice ?? fmpSummary?.lastMonthAvgPriceTarget ?? null,
       upsidePercent: upsidePercent != null ? Math.round(upsidePercent * 10) / 10 : null,
       totalAnalysts,
       breakdown: { upsideScore, consensusScore, momentumScore },

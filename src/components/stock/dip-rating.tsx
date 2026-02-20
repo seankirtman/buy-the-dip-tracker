@@ -105,12 +105,15 @@ export function DipRating({ symbol, price }: DipRatingProps) {
         </span>
       </div>
       <div className="mt-2 space-y-1.5 text-xs text-text-muted">
-        {data.totalAnalysts > 0 && (
+        {(data.totalAnalysts > 0 || data.targetPrice != null) && (
           <div>
-            <span className="text-text-secondary font-medium">{data.totalAnalysts} analysts</span>
+            {data.totalAnalysts > 0 && (
+              <span className="text-text-secondary font-medium">{data.totalAnalysts} analysts</span>
+            )}
             {data.targetPrice != null && (
               <>
-                {' · target '}
+                {data.totalAnalysts > 0 && ' · '}
+                <span className="text-text-secondary font-medium">target </span>
                 {formatCurrency(data.targetPrice)}
                 {data.upsidePercent != null && (
                   <span className={data.upsidePercent >= 0 ? 'text-positive' : 'text-negative'}>
@@ -128,6 +131,13 @@ export function DipRating({ symbol, price }: DipRatingProps) {
             </span>
             {' · avg '}
             {formatCurrency(data.fmpSummary.last30DaysAvgTarget)}
+            {price > 0 && (
+              <span className={data.fmpSummary.last30DaysAvgTarget >= price ? 'text-positive' : 'text-negative'}>
+                {' '}
+                ({data.fmpSummary.last30DaysAvgTarget >= price ? '+' : ''}
+                {(((data.fmpSummary.last30DaysAvgTarget - price) / price) * 100).toFixed(1)}%)
+              </span>
+            )}
             {data.fmpSummary.publishers.length > 0 && (
               <span className="text-text-muted/70">
                 {' '}via {data.fmpSummary.publishers.slice(0, 3).join(', ')}
