@@ -14,7 +14,7 @@ import type { PriceAnomaly } from '@/lib/events/detector';
 import { subYears, subDays, format } from 'date-fns';
 import crypto from 'crypto';
 
-const EVENTS_PIPELINE_VERSION = 'v3-adjusted-prices';
+const EVENTS_PIPELINE_VERSION = 'v4-date-fix';
 
 export async function GET(
   _request: NextRequest,
