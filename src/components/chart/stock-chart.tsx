@@ -15,6 +15,7 @@ interface StockChartProps {
   historyLoading?: boolean;
   timePeriod: TimePeriod;
   onTimePeriodChange: (period: TimePeriod) => void;
+  currentPrice?: number | null;
 }
 
 export function StockChart({
@@ -23,6 +24,7 @@ export function StockChart({
   historyLoading = false,
   timePeriod,
   onTimePeriodChange,
+  currentPrice,
 }: StockChartProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('standard');
   const [events, setEvents] = useState<StockEvent[]>([]);
@@ -145,13 +147,19 @@ export function StockChart({
               error={eventsError}
               selectedEventId={selectedEventId}
               onEventSelect={handleEventClick}
+              currentPrice={currentPrice ?? undefined}
             />
           </div>
         )}
       </div>
 
       {showEventModal && selectedEvent && (
-        <EventDetailModal event={selectedEvent} onClose={handleCloseModal} />
+        <EventDetailModal
+          event={selectedEvent}
+          onClose={handleCloseModal}
+          symbol={symbol}
+          currentPrice={currentPrice ?? undefined}
+        />
       )}
     </div>
   );

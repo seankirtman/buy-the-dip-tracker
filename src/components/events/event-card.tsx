@@ -7,10 +7,19 @@ interface EventCardProps {
   event: StockEvent;
   isSelected: boolean;
   onClick: () => void;
+  currentPrice?: number;
 }
 
-export function EventCard({ event, isSelected, onClick }: EventCardProps) {
-  const dipVerdict = getDipVerdict(event);
+export function EventCard({ event, isSelected, onClick, currentPrice }: EventCardProps) {
+  // Use live quote price when event.priceNow is 0 or invalid (matches modal logic)
+  const effectivePrice =
+    currentPrice != null && currentPrice > 0 ? currentPrice : event.priceNow;
+  const effectiveChangePercent =
+    event.priceAtEvent > 0
+      ? ((effectivePrice - event.priceAtEvent) / event.priceAtEvent) * 100
+      : event.changePercentSinceEvent;
+
+  const dipVerdict = getDipVerdict(event, effectiveChangePercent);
 
   return (
     <button
@@ -37,10 +46,10 @@ export function EventCard({ event, isSelected, onClick }: EventCardProps) {
         </span>
         <span
           className={`font-medium ${
-            event.changePercentSinceEvent >= 0 ? 'text-positive' : 'text-negative'
+            effectiveChangePercent >= 0 ? 'text-positive' : 'text-negative'
           }`}
         >
-          Since: {formatPercent(event.changePercentSinceEvent)}
+          Since: {formatPercent(effectiveChangePercent)}
         </span>
       </div>
 
@@ -60,18 +69,19 @@ export function EventCard({ event, isSelected, onClick }: EventCardProps) {
 }
 
 function getDipVerdict(
-  event: StockEvent
+  event: StockEvent,
+  changePercentSinceEvent: number
 ): { label: string; positive: boolean } | null {
   // Only show "buy the dip" analysis for negative events
   if (event.impact.direction !== 'negative') return null;
 
-  if (event.changePercentSinceEvent > 10) {
+  if (changePercentSinceEvent > 10) {
     return {
-      label: `Buying the dip? Great idea — up ${event.changePercentSinceEvent.toFixed(1)}% since`,
+      label: `Buying the dip? Great idea — up ${changePercentSinceEvent.toFixed(1)}% since`,
       positive: true,
     };
   }
-  if (event.changePercentSinceEvent > 0) {
+  if (changePercentSinceEvent > 0) {
     if (event.recoveryDays !== null) {
       return {
         label: `Recovered in ${event.recoveryDays} trading days`,
@@ -79,13 +89,13 @@ function getDipVerdict(
       };
     }
     return {
-      label: `Modestly recovered — up ${event.changePercentSinceEvent.toFixed(1)}% since`,
+      label: `Modestly recovered — up ${changePercentSinceEvent.toFixed(1)}% since`,
       positive: true,
     };
   }
   if (event.recoveryDays === null) {
     return {
-      label: `Still below event price — down ${Math.abs(event.changePercentSinceEvent).toFixed(1)}% since`,
+      label: `Still below event price — down ${Math.abs(changePercentSinceEvent).toFixed(1)}% since`,
       positive: false,
     };
   }

@@ -1,7 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { formatCurrency } from '@/lib/utils/format';
+
+const GRADE_EXPLANATION = [
+  'The grade combines three factors (weighted):',
+  '• Upside (50%): Analyst price targets vs current price — higher upside boosts the score',
+  '• Consensus (25%): Analyst ratings (strong buy to strong sell)',
+  '• Momentum (25%): Recent upgrade/downgrade activity or price target updates',
+];
 
 interface DipRatingProps {
   symbol: string;
@@ -50,6 +57,19 @@ export function DipRating({ symbol, price }: DipRatingProps) {
   const [data, setData] = useState<DipRatingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const infoRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!infoOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (infoRef.current && !infoRef.current.contains(e.target as Node)) {
+        setInfoOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [infoOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -95,6 +115,24 @@ export function DipRating({ symbol, price }: DipRatingProps) {
         <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">
           Buy the Dip Rating
         </span>
+        <div className="relative" ref={infoRef}>
+          <button
+            type="button"
+            onClick={() => setInfoOpen((v) => !v)}
+            className="inline-flex h-3.5 w-3.5 cursor-default items-center justify-center rounded-full bg-text-muted/20 text-[10px] font-medium text-text-muted transition-colors hover:bg-text-muted/30 focus:outline-none focus:ring-2 focus:ring-accent/50"
+            aria-label="How is this grade calculated?"
+            aria-expanded={infoOpen}
+          >
+            i
+          </button>
+          {infoOpen && (
+            <div className="absolute left-0 top-full z-20 mt-1.5 w-64 rounded-lg border border-border bg-bg-card px-3 py-2.5 text-xs font-normal leading-relaxed text-text-secondary shadow-lg">
+              {GRADE_EXPLANATION.map((line, i) => (
+                <p key={i} className={i > 0 ? 'mt-1.5' : ''}>{line}</p>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       <div className="mt-2 flex items-baseline gap-3">
         <span className={`text-3xl font-black tracking-tight ${colorClass}`}>

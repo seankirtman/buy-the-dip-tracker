@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type { StockEvent } from '@/lib/types/event';
 import { EventImpactBadge } from './event-impact-badge';
 import { formatCurrency, formatPercent } from '@/lib/utils/format';
@@ -9,6 +9,8 @@ import { formatDate } from '@/lib/utils/date';
 interface EventDetailModalProps {
   event: StockEvent;
   onClose: () => void;
+  symbol: string;
+  currentPrice?: number;
 }
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
@@ -23,7 +25,37 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   unknown: 'Market Move',
 };
 
-export function EventDetailModal({ event, onClose }: EventDetailModalProps) {
+export function EventDetailModal({ event, onClose, symbol, currentPrice }: EventDetailModalProps) {
+  // Use live quote price when event.priceNow is 0 or invalid
+  const effectivePrice =
+    currentPrice != null && currentPrice > 0 ? currentPrice : event.priceNow;
+  const effectiveChangePercent =
+    event.priceAtEvent > 0
+      ? ((effectivePrice - event.priceAtEvent) / event.priceAtEvent) * 100
+      : event.changePercentSinceEvent;
+
+  // Fetch dip rating for price target when Buy the Dip section is shown
+  const [dipRating, setDipRating] = useState<{
+    targetPrice: number;
+    upsidePercent: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (event.impact.direction !== 'negative' || effectivePrice <= 0) return;
+    let cancelled = false;
+    fetch(`/api/stock/${symbol}/dip-rating?price=${effectivePrice.toFixed(2)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.targetPrice != null && typeof data.targetPrice === 'number')
+          setDipRating({
+            targetPrice: data.targetPrice,
+            upsidePercent: data.upsidePercent ?? ((data.targetPrice - effectivePrice) / effectivePrice) * 100,
+          });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [symbol, effectivePrice, event.impact.direction]);
+
   // Close on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -41,7 +73,7 @@ export function EventDetailModal({ event, onClose }: EventDetailModalProps) {
     };
   }, []);
 
-  const dipAnalysis = getDipAnalysis(event);
+  const dipAnalysis = getDipAnalysis(event, effectiveChangePercent);
   const sp500Return =
     typeof event.sp500Return === 'number'
       ? event.sp500Return
@@ -89,7 +121,7 @@ export function EventDetailModal({ event, onClose }: EventDetailModalProps) {
             />
             <Stat
               label="Current Price"
-              value={formatCurrency(event.priceNow)}
+              value={formatCurrency(effectivePrice)}
             />
             <Stat
               label={event.timeframe === 'weekly' ? 'Week Move' : 'Day Move'}
@@ -98,8 +130,8 @@ export function EventDetailModal({ event, onClose }: EventDetailModalProps) {
             />
             <Stat
               label="Since Event"
-              value={formatPercent(event.changePercentSinceEvent)}
-              color={event.changePercentSinceEvent >= 0 ? 'positive' : 'negative'}
+              value={formatPercent(effectiveChangePercent)}
+              color={effectiveChangePercent >= 0 ? 'positive' : 'negative'}
             />
           </div>
 
@@ -141,6 +173,16 @@ export function EventDetailModal({ event, onClose }: EventDetailModalProps) {
                 {dipAnalysis.verdict}
               </p>
               <p className="mt-1 text-xs text-text-secondary">{dipAnalysis.detail}</p>
+              {dipRating && (
+                <p className="mt-2 text-xs text-text-secondary">
+                  Analyst price target: {formatCurrency(dipRating.targetPrice)}
+                  {dipRating.upsidePercent != null && (
+                    <span className={dipRating.upsidePercent >= 0 ? ' text-positive' : ' text-negative'}>
+                      {' '}({dipRating.upsidePercent >= 0 ? '+' : ''}{dipRating.upsidePercent.toFixed(1)}% upside)
+                    </span>
+                  )}
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -221,11 +263,12 @@ function formatPercentagePoints(value: number): string {
 }
 
 function getDipAnalysis(
-  event: StockEvent
+  event: StockEvent,
+  changePercentSinceEvent: number
 ): { verdict: string; detail: string; positive: boolean } | null {
   if (event.impact.direction !== 'negative') return null;
 
-  const changeSince = event.changePercentSinceEvent;
+  const changeSince = changePercentSinceEvent;
   const recoveryDays = event.recoveryDays;
 
   if (changeSince > 20) {

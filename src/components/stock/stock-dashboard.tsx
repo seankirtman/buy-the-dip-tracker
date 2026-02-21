@@ -99,6 +99,7 @@ export function StockDashboard({ symbol, initialQuote, initialHistory }: StockDa
         historyLoading={historyLoading}
         timePeriod={timePeriod}
         onTimePeriodChange={setTimePeriod}
+        currentPrice={initialQuote?.price}
       />
     </>
   );

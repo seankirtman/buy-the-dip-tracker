@@ -9,6 +9,7 @@ interface EventListProps {
   error?: string | null;
   selectedEventId: string | null;
   onEventSelect: (eventId: string) => void;
+  currentPrice?: number;
 }
 
 export function EventList({
@@ -17,6 +18,7 @@ export function EventList({
   error,
   selectedEventId,
   onEventSelect,
+  currentPrice,
 }: EventListProps) {
   // Default and only view: most recent events first.
   const sortedEvents = [...events].sort((a, b) => b.date.localeCompare(a.date));
@@ -112,6 +114,7 @@ export function EventList({
             event={event}
             isSelected={event.id === selectedEventId}
             onClick={() => onEventSelect(event.id)}
+            currentPrice={currentPrice}
           />
         ))}
       </div>
