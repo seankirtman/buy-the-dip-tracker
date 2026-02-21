@@ -11,6 +11,8 @@ const LIMITS: Record<string, { daily: number; perMinute: number }> = {
   alpha_vantage: { daily: 25, perMinute: 5 },
   finnhub: { daily: Infinity, perMinute: 60 },
   fmp: { daily: 250, perMinute: 10 },
+  twelve_data: { daily: 800, perMinute: 8 },
+  stockdata: { daily: 100, perMinute: 10 },
 };
 
 const minuteTrackers: Record<string, number[]> = {};

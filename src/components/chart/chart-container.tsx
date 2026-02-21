@@ -244,18 +244,28 @@ export const ChartContainer = forwardRef<ChartContainerHandle, ChartContainerPro
         return;
       }
 
-      // Only show markers for events that fall within the currently displayed timeframe data.
-      const visibleDates = new Set(data.map((d) => d.time.slice(0, 10)));
+      // Chart may use daily or weekly data. Weekly bars use week-end dates (e.g. Fri), events use daily dates.
+      // Map each event to the chart bar that contains it: smallest data date >= event date.
+      const sortedDataTimes = [...data]
+        .map((d) => d.time.slice(0, 10))
+        .sort((a, b) => a.localeCompare(b));
 
-      // Only show top 15 events on chart
+      const eventToChartTime = (eventDate: string): string | null => {
+        const exact = sortedDataTimes.find((t) => t === eventDate);
+        if (exact) return exact;
+        const nextBar = sortedDataTimes.find((t) => t >= eventDate);
+        return nextBar ?? null;
+      };
+
       const topEvents = [...events]
-        .filter((event) => visibleDates.has(event.date))
-        .sort((a, b) => b.impactScore - a.impactScore)
+        .map((event) => ({ event, chartTime: eventToChartTime(event.date) }))
+        .filter(({ chartTime }) => chartTime != null)
+        .sort((a, b) => b.event.impactScore - a.event.impactScore)
         .slice(0, 15)
-        .sort((a, b) => a.date.localeCompare(b.date));
+        .sort((a, b) => a.chartTime!.localeCompare(b.chartTime!));
 
-      const markers: SeriesMarkerBar<Time>[] = topEvents.map((event) => ({
-        time: event.date as Time,
+      const markers: SeriesMarkerBar<Time>[] = topEvents.map(({ event, chartTime }) => ({
+        time: chartTime as Time,
         position: (event.impact.direction === 'negative' ? 'aboveBar' : 'belowBar') as SeriesMarkerBar<Time>['position'],
         color:
           event.impact.magnitude === 'extreme'
@@ -277,10 +287,16 @@ export const ChartContainer = forwardRef<ChartContainerHandle, ChartContainerPro
 
     // Zoom to selected event
     useEffect(() => {
-      if (selectedEventId && chartRef.current) {
+      if (selectedEventId && chartRef.current && data.length > 0) {
         const event = events.find((e) => e.id === selectedEventId);
         if (event) {
-          const idx = data.findIndex((d) => d.time === event.date);
+          const sortedDataTimes = [...data]
+            .map((d) => d.time.slice(0, 10))
+            .sort((a, b) => a.localeCompare(b));
+          const chartTime =
+            sortedDataTimes.find((t) => t >= event.date) ??
+            sortedDataTimes[sortedDataTimes.length - 1];
+          const idx = data.findIndex((d) => d.time.slice(0, 10) === chartTime);
           if (idx >= 0) {
             const from = Math.max(0, idx - 30);
             const to = Math.min(data.length - 1, idx + 30);
@@ -295,13 +311,22 @@ export const ChartContainer = forwardRef<ChartContainerHandle, ChartContainerPro
 
     // Handle click on chart for event selection
     useEffect(() => {
-      if (!chartRef.current || !onEventClick || !showEvents) return;
+      if (!chartRef.current || !onEventClick || !showEvents || data.length === 0) return;
+
+      const sortedDataTimes = [...data]
+        .map((d) => d.time.slice(0, 10))
+        .sort((a, b) => a.localeCompare(b));
+      const eventToChartTime = (eventDate: string): string | null => {
+        if (sortedDataTimes.includes(eventDate)) return eventDate;
+        const nextBar = sortedDataTimes.find((t) => t >= eventDate);
+        return nextBar ?? null;
+      };
 
       const chart = chartRef.current;
       const handler = (param: { time?: Time }) => {
         if (!param.time) return;
-        const timeStr = param.time as string;
-        const matchingEvent = events.find((e) => e.date === timeStr);
+        const timeStr = (param.time as string).slice(0, 10);
+        const matchingEvent = events.find((e) => eventToChartTime(e.date) === timeStr);
         if (matchingEvent) {
           onEventClick(matchingEvent.id);
         }
@@ -309,7 +334,7 @@ export const ChartContainer = forwardRef<ChartContainerHandle, ChartContainerPro
 
       chart.subscribeClick(handler);
       return () => chart.unsubscribeClick(handler);
-    }, [events, showEvents, onEventClick]);
+    }, [events, showEvents, onEventClick, data]);
 
     return (
       <div

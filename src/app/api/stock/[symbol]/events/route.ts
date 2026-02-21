@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cacheManager, CacheManager } from '@/lib/db/cache';
 import { getDailyTimeSeries, getWeeklyTimeSeries } from '@/lib/api/alpha-vantage';
 import { getCompanyProfile, getCompanyNews, getDailyCandlesTimeSeries, getQuote } from '@/lib/api/finnhub';
+import { getDailyTimeSeries as getTwelveDataDaily, getWeeklyTimeSeries as getTwelveDataWeekly } from '@/lib/api/twelve-data';
+import { getDailyTimeSeries as getStockDataDaily, getWeeklyTimeSeries as getStockDataWeekly, getCompanyNews as getStockDataNews } from '@/lib/api/stockdata';
 import { detectAnomalies } from '@/lib/events/detector';
 import { correlateNews } from '@/lib/events/correlator';
 import { scoreAndRankEvents } from '@/lib/events/scorer';
@@ -12,7 +14,7 @@ import type { PriceAnomaly } from '@/lib/events/detector';
 import { subYears, subDays, format } from 'date-fns';
 import crypto from 'crypto';
 
-const EVENTS_PIPELINE_VERSION = 'v3-adjusted-prices';
+const EVENTS_PIPELINE_VERSION = 'v4-date-fix';
 
 export async function GET(
   _request: NextRequest,
@@ -26,48 +28,71 @@ export async function GET(
   try {
     const getSeries = async (
       key: string,
-      fetcher: () => Promise<TimeSeriesData>,
+      fetchers: Array<() => Promise<TimeSeriesData>>,
       symbolForCache: string
     ): Promise<TimeSeriesData> => {
-      try {
-        return await cacheManager.getOrFetch<TimeSeriesData>(
-          'price_cache',
-          key,
-          604800, // 7 day TTL
-          fetcher,
-          symbolForCache
-        );
-      } catch (error) {
-        const cached = cacheManager.getCached<TimeSeriesData>('price_cache', key);
-        if (cached) {
-          stale = true;
-          return cached;
+      for (const fetcher of fetchers) {
+        try {
+          return await cacheManager.getOrFetch<TimeSeriesData>(
+            'price_cache',
+            key,
+            604800, // 7 day TTL
+            fetcher,
+            symbolForCache
+          );
+        } catch {
+          const cached = cacheManager.getCached<TimeSeriesData>('price_cache', key);
+          if (cached) {
+            stale = true;
+            return cached;
+          }
+          // Try next fetcher
         }
-        throw error;
       }
+      throw new Error('All history providers failed');
     };
 
     // Step 1: Fetch SPY first (shared across all symbols) so it’s cached for subsequent requests
     const spyDaily = await getSeries(
       'SPY:daily:compact',
-      () => getDailyTimeSeries('SPY', 'compact'),
+      [
+        () => getDailyTimeSeries('SPY', 'compact'),
+        () => getDailyCandlesTimeSeries('SPY'),
+        () => getTwelveDataDaily('SPY'),
+        () => getStockDataDaily('SPY'),
+      ],
       'SPY'
     );
     const spyWeekly = await getSeries(
       'SPY:weekly',
-      () => getWeeklyTimeSeries('SPY'),
+      [
+        () => getWeeklyTimeSeries('SPY'),
+        () => getDailyCandlesTimeSeries('SPY'),
+        () => getTwelveDataWeekly('SPY'),
+        () => getStockDataWeekly('SPY'),
+      ],
       'SPY'
     );
 
     // Step 2: Get stock price data for daily and weekly abnormal-move detection
     const stockDaily = await getSeries(
       `${upperSymbol}:daily:compact`,
-      () => getDailyTimeSeries(upperSymbol, 'compact'),
+      [
+        () => getDailyTimeSeries(upperSymbol, 'compact'),
+        () => getDailyCandlesTimeSeries(upperSymbol),
+        () => getTwelveDataDaily(upperSymbol),
+        () => getStockDataDaily(upperSymbol),
+      ],
       upperSymbol
     );
     const stockWeekly = await getSeries(
       `${upperSymbol}:weekly`,
-      () => getWeeklyTimeSeries(upperSymbol),
+      [
+        () => getWeeklyTimeSeries(upperSymbol),
+        () => getDailyCandlesTimeSeries(upperSymbol),
+        () => getTwelveDataWeekly(upperSymbol),
+        () => getStockDataWeekly(upperSymbol),
+      ],
       upperSymbol
     );
 
@@ -263,14 +288,19 @@ export async function GET(
         // Continue to news-only fallback.
       }
 
-      // Final fallback: use Finnhub company-news only (no price anomaly data).
+      // Final fallback: use company news only (no price anomaly data).
       // Surfaces recent news when candle data is unavailable (e.g. free tier restrictions).
       try {
         const toDate = new Date();
         const fromDate = subDays(toDate, 14);
         const from = format(fromDate, 'yyyy-MM-dd');
         const to = format(toDate, 'yyyy-MM-dd');
-        const articles = await getCompanyNews(upperSymbol, from, to);
+        let articles: NewsArticle[];
+        try {
+          articles = await getCompanyNews(upperSymbol, from, to);
+        } catch {
+          articles = await getStockDataNews(upperSymbol, from, to);
+        }
         if (articles.length > 0) {
           const quote = await getQuote(upperSymbol).catch(() => null);
           const priceNow = quote?.price ?? 0;

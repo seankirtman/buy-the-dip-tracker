@@ -1,8 +1,9 @@
 import type { NewsArticle, EventType } from '@/lib/types/event';
 import type { PriceAnomaly } from './detector';
 import { getCompanyNews } from '@/lib/api/finnhub';
+import { getCompanyNews as getStockDataNews } from '@/lib/api/stockdata';
 import { cacheManager } from '@/lib/db/cache';
-import { format, subDays, addDays } from 'date-fns';
+import { format, subDays, addDays, parse } from 'date-fns';
 
 // Keyword dictionaries for event type classification
 const EVENT_KEYWORDS: Record<EventType, string[]> = {
@@ -64,7 +65,9 @@ export async function correlateNews(
   const mentionTerms = buildMentionTerms(symbol, companyName);
 
   for (const anomaly of anomalies) {
-    const date = new Date(anomaly.date);
+    // Parse as local date to avoid UTC midnight shifting to previous day in western timezones
+    const dateStr = anomaly.date.slice(0, 10); // Handle "YYYY-MM-DD" or "YYYY-MM-DD HH:mm:ss"
+    const date = parse(dateStr, 'yyyy-MM-dd', new Date());
     const sameDay = format(date, 'yyyy-MM-dd');
     const from = format(subDays(date, 1), 'yyyy-MM-dd');
     const to = format(addDays(date, 1), 'yyyy-MM-dd');
@@ -72,12 +75,19 @@ export async function correlateNews(
     const cacheKey = `${symbol}:${sameDay}:${from}:${to}`;
 
     let articles: NewsArticle[];
+    const getNewsWithFallbacks = async () => {
+      try {
+        return await getCompanyNews(symbol, from, to);
+      } catch {
+        return await getStockDataNews(symbol, from, to);
+      }
+    };
     try {
       articles = await cacheManager.getOrFetch<NewsArticle[]>(
         'news_cache',
         cacheKey,
         7200, // 2 hour TTL
-        () => getCompanyNews(symbol, from, to),
+        getNewsWithFallbacks,
         symbol
       );
     } catch {
@@ -240,7 +250,18 @@ function buildMentionTerms(symbol: string, companyName?: string): string[] {
 
 function mentionsCompany(article: NewsArticle, mentionTerms: string[]): boolean {
   const text = `${article.headline} ${article.summary}`.toLowerCase();
-  return mentionTerms.some((term) => text.includes(term));
+  return mentionTerms.some((term) => {
+    const lower = term.toLowerCase();
+    if (lower.length <= 3) {
+      // Short tickers (e.g. MP, CRM): use word boundary to avoid false positives (camp, jump)
+      return new RegExp(`\\b${escapeRegex(lower)}\\b`, 'i').test(text);
+    }
+    return text.includes(lower);
+  });
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // Finnhub company-news doesn't include a popularity field, so proxy with source + recency.

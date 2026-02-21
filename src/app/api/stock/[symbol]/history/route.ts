@@ -9,6 +9,8 @@ import {
   getIntradayTimeSeries as getFinnhubIntradayTimeSeries,
   getDailyCandlesTimeSeries,
 } from '@/lib/api/finnhub';
+import { getDailyTimeSeries as getTwelveDataDaily, getWeeklyTimeSeries as getTwelveDataWeekly } from '@/lib/api/twelve-data';
+import { getDailyTimeSeries as getStockDataDaily, getWeeklyTimeSeries as getStockDataWeekly } from '@/lib/api/stockdata';
 import { RateLimitError } from '@/lib/api/api-queue';
 import { filterDataByPeriod, getTTLForPeriod } from '@/lib/utils/date';
 import type { TimePeriod, TimeSeriesData } from '@/lib/types/stock';
@@ -99,25 +101,29 @@ export async function GET(
     }
 
     if (!useIntraday) {
-      try {
-        const finnhubDaily = await cacheManager.getOrFetch<TimeSeriesData>(
-          'price_cache',
-          `${upperSymbol}:finnhub:daily`,
-          ttl,
-          () => getDailyCandlesTimeSeries(upperSymbol),
-          upperSymbol
-        );
-        const filteredPoints = filterDataByPeriod(finnhubDaily.dataPoints, period);
-        return NextResponse.json({
-          data: {
-            ...finnhubDaily,
-            dataPoints: filteredPoints,
-          },
-          stale: true,
-          error: 'Using Finnhub history fallback',
-        });
-      } catch {
-        // Continue to original error response path below.
+      const historyFallbacks: Array<{ key: string; fetcher: () => Promise<TimeSeriesData> }> = [
+        { key: 'finnhub', fetcher: () => getDailyCandlesTimeSeries(upperSymbol) },
+        { key: 'twelve_data', fetcher: () => (useWeekly ? getTwelveDataWeekly(upperSymbol) : getTwelveDataDaily(upperSymbol)) },
+        { key: 'stockdata', fetcher: () => (useWeekly ? getStockDataWeekly(upperSymbol) : getStockDataDaily(upperSymbol)) },
+      ];
+      for (const fb of historyFallbacks) {
+        try {
+          const fallbackData = await cacheManager.getOrFetch<TimeSeriesData>(
+            'price_cache',
+            `${upperSymbol}:${fb.key}:${useWeekly ? 'weekly' : 'daily'}`,
+            ttl,
+            fb.fetcher,
+            upperSymbol
+          );
+          const filteredPoints = filterDataByPeriod(fallbackData.dataPoints, period);
+          return NextResponse.json({
+            data: { ...fallbackData, dataPoints: filteredPoints },
+            stale: true,
+            error: `Using ${fb.key} history fallback`,
+          });
+        } catch {
+          // Try next fallback.
+        }
       }
     }
 

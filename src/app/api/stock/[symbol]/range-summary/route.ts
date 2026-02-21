@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { subDays, format } from 'date-fns';
 import { getCompanyNews } from '@/lib/api/finnhub';
+import { getCompanyNews as getStockDataNews } from '@/lib/api/stockdata';
 import { cacheManager } from '@/lib/db/cache';
 import type { NewsArticle } from '@/lib/types/event';
 
@@ -10,12 +11,19 @@ async function fetchRecentNewsSnippets(symbol: string): Promise<string[]> {
   const fromStr = format(from, 'yyyy-MM-dd');
   const toStr = format(to, 'yyyy-MM-dd');
   const cacheKey = `news:summary:${symbol}:${fromStr}:${toStr}`;
+  const getNewsWithFallbacks = async () => {
+    try {
+      return await getCompanyNews(symbol, fromStr, toStr);
+    } catch {
+      return await getStockDataNews(symbol, fromStr, toStr);
+    }
+  };
   try {
     const articles = await cacheManager.getOrFetch<NewsArticle[]>(
       'news_cache',
       cacheKey,
       3600, // 1 hour TTL
-      () => getCompanyNews(symbol, fromStr, toStr),
+      getNewsWithFallbacks,
       symbol
     );
     return articles.slice(0, 7).map((a) => {
