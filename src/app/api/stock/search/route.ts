@@ -40,9 +40,10 @@ function getSearchResultScore(result: SearchResult, query: string) {
   if (compactSymbol.includes(compactQuery)) score += 300;
   if (compactName.includes(compactQuery)) score += 250;
 
-  // Prefer tighter matches once the main relevance buckets are equal.
-  score -= Math.max(compactName.length - compactQuery.length, 0);
-  score -= Math.max(compactSymbol.length - compactQuery.length, 0) / 10;
+  // Tie-breaker: prefer shorter names/symbols when relevance is equal.
+  // Use small divisors so these never dominate the main relevance scores (smallest gap ~50).
+  score -= Math.max(compactName.length - compactQuery.length, 0) / 10;
+  score -= Math.max(compactSymbol.length - compactQuery.length, 0) / 100;
 
   return score;
 }
