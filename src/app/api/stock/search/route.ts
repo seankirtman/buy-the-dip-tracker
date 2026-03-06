@@ -40,8 +40,14 @@ function getSearchResultScore(result: SearchResult, query: string) {
   if (compactSymbol.includes(compactQuery)) score += 300;
   if (compactName.includes(compactQuery)) score += 250;
 
+  // Always prefer primary US listings (clean symbol, US region) over international exchanges.
+  const isPrimaryUSListing =
+    TICKER_PATTERN.test(result.symbol) &&
+    /^[A-Za-z]+$/.test(result.symbol) &&
+    (result.region === '' || /united states|usa|us\b/i.test(result.region));
+  if (isPrimaryUSListing) score += 1200;
+
   // Tie-breaker: prefer shorter names/symbols when relevance is equal.
-  // Use small divisors so these never dominate the main relevance scores (smallest gap ~50).
   score -= Math.max(compactName.length - compactQuery.length, 0) / 10;
   score -= Math.max(compactSymbol.length - compactQuery.length, 0) / 100;
 
