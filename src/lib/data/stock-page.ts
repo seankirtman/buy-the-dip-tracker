@@ -14,6 +14,13 @@ import { isMarketHours } from '@/lib/utils/date';
 import { filterDataByPeriod, getTTLForPeriod } from '@/lib/utils/date';
 import type { StockQuote, TimePeriod, TimeSeriesData } from '@/lib/types/stock';
 
+function getMinPointsForPeriod(period: TimePeriod): number {
+  if (period === '1D') return 4;
+  if (period === '7D') return 5;
+  if (period === '1M') return 15;
+  return 20;
+}
+
 export interface StockPageData {
   quote: StockQuote | null;
   history: TimeSeriesData | null;
@@ -113,12 +120,18 @@ export async function getStockPageData(
       upperSymbol
     );
     const filteredPoints = filterDataByPeriod(fullData.dataPoints, period);
-    history = { ...fullData, dataPoints: filteredPoints };
+    const minPoints = getMinPointsForPeriod(period);
+    if (filteredPoints.length >= minPoints) {
+      history = { ...fullData, dataPoints: filteredPoints };
+    } else {
+      throw new Error(`Insufficient data: ${filteredPoints.length} points`);
+    }
   } catch (error) {
     const cached = cacheManager.getCached<TimeSeriesData>('price_cache', cacheKey);
-    if (cached) {
-      const filteredPoints = filterDataByPeriod(cached.dataPoints, period);
-      history = { ...cached, dataPoints: filteredPoints };
+    const minPoints = getMinPointsForPeriod(period);
+    const cachedFiltered = cached ? filterDataByPeriod(cached.dataPoints, period) : [];
+    if (cached && cachedFiltered.length >= minPoints) {
+      history = { ...cached, dataPoints: cachedFiltered };
       stale = true;
     } else {
       const historyFallbacks: Array<{ key: string; daily: () => Promise<TimeSeriesData>; weekly: () => Promise<TimeSeriesData> }> = [
@@ -126,6 +139,7 @@ export async function getStockPageData(
         { key: 'twelve_data', daily: () => getTwelveDataDaily(upperSymbol), weekly: () => getTwelveDataWeekly(upperSymbol) },
         { key: 'stockdata', daily: () => getStockDataDaily(upperSymbol), weekly: () => getStockDataWeekly(upperSymbol) },
       ];
+      const minPoints = getMinPointsForPeriod(period);
       for (const fb of historyFallbacks) {
         try {
           const fetcher = useWeekly ? fb.weekly : fb.daily;
@@ -137,9 +151,11 @@ export async function getStockPageData(
             upperSymbol
           );
           const filteredPoints = filterDataByPeriod(fallbackData.dataPoints, period);
-          history = { ...fallbackData, dataPoints: filteredPoints };
-          stale = true;
-          break;
+          if (filteredPoints.length >= minPoints) {
+            history = { ...fallbackData, dataPoints: filteredPoints };
+            stale = true;
+            break;
+          }
         } catch (fallbackError) {
           const isExpectedProviderDenial =
             fallbackError instanceof Error &&

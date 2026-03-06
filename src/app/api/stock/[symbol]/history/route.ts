@@ -20,6 +20,14 @@ const VALID_PERIODS: TimePeriod[] = ['1D', '7D', '1M', '6M', 'YTD', '1Y'];
 // Alpha Vantage free tier: daily 'full' is premium-only. Use weekly for 6M+/YTD/1Y.
 const USE_WEEKLY_FOR: TimePeriod[] = ['6M', 'YTD', '1Y'];
 
+// Minimum data points required to accept a provider result (avoids empty Finnhub 401/403/429 responses).
+function getMinPointsForPeriod(period: TimePeriod): number {
+  if (period === '1D') return 4;
+  if (period === '7D') return 5;
+  if (period === '1M') return 15;
+  return 20; // 6M, YTD, 1Y
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ symbol: string }> }
@@ -81,6 +89,11 @@ export async function GET(
       ? fullData.dataPoints
       : filterDataByPeriod(fullData.dataPoints, period);
 
+    const minPoints = getMinPointsForPeriod(period);
+    if (filteredPoints.length < minPoints) {
+      throw new Error(`Insufficient data: ${filteredPoints.length} points (need ${minPoints})`);
+    }
+
     return NextResponse.json({
       data: {
         ...fullData,
@@ -88,13 +101,16 @@ export async function GET(
       },
     });
   } catch (error) {
+    const minPoints = getMinPointsForPeriod(period);
     const cached = cacheManager.getCached<TimeSeriesData>('price_cache', cacheKey);
-    if (cached && (!useIntraday || cached.dataPoints.length >= 4)) {
-      const filteredPoints = useIntraday
+    const cachedPoints = cached
+      ? useIntraday
         ? cached.dataPoints
-        : filterDataByPeriod(cached.dataPoints, period);
+        : filterDataByPeriod(cached.dataPoints, period)
+      : [];
+    if (cached && cachedPoints.length >= minPoints) {
       return NextResponse.json({
-        data: { ...cached, dataPoints: filteredPoints },
+        data: { ...cached, dataPoints: cachedPoints },
         stale: true,
         error: error instanceof Error ? error.message : 'Using cached history data',
       });
@@ -116,11 +132,14 @@ export async function GET(
             upperSymbol
           );
           const filteredPoints = filterDataByPeriod(fallbackData.dataPoints, period);
-          return NextResponse.json({
-            data: { ...fallbackData, dataPoints: filteredPoints },
-            stale: true,
-            error: `Using ${fb.key} history fallback`,
-          });
+          if (filteredPoints.length >= minPoints) {
+            return NextResponse.json({
+              data: { ...fallbackData, dataPoints: filteredPoints },
+              stale: true,
+              error: `Using ${fb.key} history fallback`,
+            });
+          }
+          // Finnhub returns empty on 401/403/429; skip to next provider.
         } catch {
           // Try next fallback.
         }
