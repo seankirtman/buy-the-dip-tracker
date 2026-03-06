@@ -6,7 +6,7 @@ import { ChartContainer } from './chart-container';
 import type { ChartContainerHandle } from './chart-container';
 import { EventList } from '@/components/events/event-list';
 import { EventDetailModal } from '@/components/events/event-detail-modal';
-import type { TimePeriod, ViewMode, TimeSeriesData } from '@/lib/types/stock';
+import type { TimePeriod, ViewMode, TimeSeriesData, OHLCDataPoint } from '@/lib/types/stock';
 import type { StockEvent } from '@/lib/types/event';
 
 interface StockChartProps {
