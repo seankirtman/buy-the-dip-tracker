@@ -35,6 +35,7 @@ interface ChartContainerProps {
   selectedEventId: string | null;
   timePeriod?: TimePeriod;
   onEventClick?: (eventId: string) => void;
+  onCrosshairMove?: (point: OHLCDataPoint | null) => void;
 }
 
 function formatTickLabel(time: Time, tickMarkType: TickMarkType, period?: TimePeriod): string {
@@ -78,7 +79,7 @@ function toChartTime(value: string): Time {
 }
 
 export const ChartContainer = forwardRef<ChartContainerHandle, ChartContainerProps>(
-  function ChartContainer({ data, events, showEvents, selectedEventId, timePeriod, onEventClick }, ref) {
+  function ChartContainer({ data, events, showEvents, selectedEventId, timePeriod, onEventClick, onCrosshairMove }, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const seriesRef = useRef<ISeriesApi<'Area'> | null>(null);
@@ -335,6 +336,42 @@ export const ChartContainer = forwardRef<ChartContainerHandle, ChartContainerPro
       chart.subscribeClick(handler);
       return () => chart.unsubscribeClick(handler);
     }, [events, showEvents, onEventClick, data]);
+
+    // Crosshair move: notify parent
+    useEffect(() => {
+      if (!chartRef.current || !seriesRef.current || !onCrosshairMove || data.length === 0) return;
+
+      const chart = chartRef.current;
+      const series = seriesRef.current;
+
+      // @ts-ignore - Lightweight charts types can be tricky
+      const handler = (param) => {
+        if (!param.point || !param.seriesData) {
+          onCrosshairMove(null);
+          return;
+        }
+        const pointData = param.seriesData.get(series);
+        if (!pointData || !pointData.time) {
+          onCrosshairMove(null);
+          return;
+        }
+        
+        const t = pointData.time;
+        const match = data.find((d) => toChartTime(d.time) === t);
+        onCrosshairMove(match ?? null);
+      };
+
+      chart.subscribeCrosshairMove(handler);
+
+      const el = containerRef.current;
+      const onLeave = () => onCrosshairMove(null);
+      el?.addEventListener('mouseleave', onLeave);
+
+      return () => {
+        chart.unsubscribeCrosshairMove(handler);
+        el?.removeEventListener('mouseleave', onLeave);
+      };
+    }, [data, onCrosshairMove]);
 
     return (
       <div

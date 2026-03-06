@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { StockOverview } from '@/components/stock/stock-overview';
 import { StockChart } from '@/components/chart/stock-chart';
 import { WatchlistButton } from '@/components/stock/watchlist-button';
-import type { StockQuote, TimePeriod, TimeSeriesData } from '@/lib/types/stock';
+import type { StockQuote, TimePeriod, TimeSeriesData, OHLCDataPoint } from '@/lib/types/stock';
 
 interface StockDashboardProps {
   symbol: string;
@@ -18,6 +18,7 @@ export function StockDashboard({ symbol, initialQuote, initialHistory }: StockDa
   const [historyLoading, setHistoryLoading] = useState(false);
   const [periodChange, setPeriodChange] = useState<number | undefined>(undefined);
   const [periodChangePercent, setPeriodChangePercent] = useState<number | undefined>(undefined);
+  const [crosshairPoint, setCrosshairPoint] = useState<OHLCDataPoint | null>(null);
 
   // Calculate change when history data updates
   useEffect(() => {
@@ -89,6 +90,7 @@ export function StockDashboard({ symbol, initialQuote, initialHistory }: StockDa
           symbol={symbol} 
           periodChange={periodChange}
           periodChangePercent={periodChangePercent}
+          crosshairPoint={crosshairPoint}
         />
         <WatchlistButton symbol={symbol} />
       </div>
@@ -100,6 +102,7 @@ export function StockDashboard({ symbol, initialQuote, initialHistory }: StockDa
         timePeriod={timePeriod}
         onTimePeriodChange={setTimePeriod}
         currentPrice={initialQuote?.price}
+        onCrosshairMove={setCrosshairPoint}
       />
     </>
   );

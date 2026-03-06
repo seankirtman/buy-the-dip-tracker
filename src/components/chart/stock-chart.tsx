@@ -16,6 +16,7 @@ interface StockChartProps {
   timePeriod: TimePeriod;
   onTimePeriodChange: (period: TimePeriod) => void;
   currentPrice?: number | null;
+  onCrosshairMove?: (point: OHLCDataPoint | null) => void;
 }
 
 export function StockChart({
@@ -25,6 +26,7 @@ export function StockChart({
   timePeriod,
   onTimePeriodChange,
   currentPrice,
+  onCrosshairMove,
 }: StockChartProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('standard');
   const [events, setEvents] = useState<StockEvent[]>([]);
@@ -127,6 +129,7 @@ export function StockChart({
               selectedEventId={selectedEventId}
               timePeriod={timePeriod}
               onEventClick={handleEventClick}
+              onCrosshairMove={onCrosshairMove}
             />
           ) : historyLoading ? (
             <div className="flex h-[500px] w-full items-center justify-center rounded-xl border border-border/50 bg-gradient-to-b from-bg-secondary/30 to-bg-primary px-6 text-center text-sm text-text-secondary">
